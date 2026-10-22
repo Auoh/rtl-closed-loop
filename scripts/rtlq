@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+# rtlq - Linux/macOS entry point for the rtl-closed-loop quality CLI.
+# Usage (from a workspace with rtl/ tb/):
+#   ./rtlq doctor
+#   ./rtlq all --top ch_num_gen --workdir /path/to/ws
+set -euo pipefail
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Skip broken stubs such as the Windows Store python3 alias (exits 49).
+PY=""
+for cand in "${PYTHON:-}" python3 python py; do
+  [ -n "$cand" ] || continue
+  p="$(command -v "$cand" 2>/dev/null || true)"
+  [ -n "$p" ] || continue
+  if "$p" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 8) else 1)' >/dev/null 2>&1; then
+    PY="$p"
+    break
+  fi
+done
+if [ -z "$PY" ]; then
+  echo "[MISS] python3 not found; rtlq needs Python 3.8+"
+  exit 3
+fi
+if [ $# -eq 0 ]; then
+  exec "$PY" "$HERE/rtlq.py" --help
+fi
+exec "$PY" "$HERE/rtlq.py" "$@"

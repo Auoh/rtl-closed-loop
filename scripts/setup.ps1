@@ -5,8 +5,9 @@
     & '<skill>\scripts\setup.ps1' -Install   # 把便携工具链部署到 $HOME\.codex\rtl-toolchain
     & '<skill>\scripts\setup.ps1' -Offline              # 无网恢复：自动找工作区根目录的离线包
     & '<skill>\scripts\setup.ps1' -Offline -Zip <zip>   # 或显式指定离线包路径
-    & '<skill>\scripts\setup.ps1' -Bundle -W <工作区>   # 部署到工作区 tools\iverilog（整项目打包用）
+    & '<skill>\scripts\setup.ps1' -Bundle -W <工作区>   # 部署到工作区 tools\iverilog + tools\quality-lite
     & '<skill>\scripts\setup.ps1' -Install -Source "X:\path\to\iverilog"
+    & '<skill>\scripts\setup.ps1' -Install -QualitySource "X:\path\to\quality-lite"
 #>
 param(
     [switch]$Check,
@@ -16,6 +17,7 @@ param(
     [switch]$Offline,
     [string]$Zip = '',
     [string]$Source = '',
+    [string]$QualitySource = '',
     [string]$Target = '',
     [string]$W = ''
 )
@@ -31,24 +33,72 @@ function Find-Py {
     return $null
 }
 
+# 部署 quality-lite（Yosys/slang/sby）。Src 可以是 quality-lite 根，
+# 也可以是其父目录（自动探测 quality-lite 子目录）。
+function Copy-QualityLite {
+    param([string]$Src, [string]$Dest)
+    if (-not $Src -or -not (Test-Path -LiteralPath $Src)) {
+        Write-Host "[WARN] quality-lite 来源不存在: $Src"
+        return $false
+    }
+    $Src = (Resolve-Path -LiteralPath $Src).Path
+    if (-not (Test-Path -LiteralPath (Join-Path $Src 'yosys\bin\yosys.exe'))) {
+        $alt = Join-Path $Src 'quality-lite'
+        if (Test-Path -LiteralPath (Join-Path $alt 'yosys\bin\yosys.exe')) {
+            $Src = (Resolve-Path -LiteralPath $alt).Path
+        }
+    }
+    if (-not (Test-Path -LiteralPath (Join-Path $Src 'yosys\bin\yosys.exe'))) {
+        Write-Host "[WARN] 来源不是有效的 quality-lite（缺少 yosys\bin\yosys.exe）: $Src"
+        return $false
+    }
+    $sf = [System.IO.Path]::GetFullPath($Src).TrimEnd('\')
+    $df = [System.IO.Path]::GetFullPath($Dest).TrimEnd('\')
+    if ($sf -ieq $df) {
+        Write-Host "  quality-lite 源与目标相同，跳过: $Dest"
+        return $true
+    }
+    if (Test-Path -LiteralPath $Dest) {
+        $item = Get-Item -LiteralPath $Dest
+        if ($item.LinkType) { $item.Delete() }
+        else { Remove-Item -LiteralPath $Dest -Recurse -Force }
+    }
+    New-Item -ItemType Directory -Force -Path $Dest | Out-Null
+    Write-Host "  拷贝 quality-lite ..."
+    robocopy $Src $Dest /E /NFL /NDL /NJH /NJS | Out-Null
+    if ($LASTEXITCODE -ge 8) { Write-Host "[WARN] quality-lite 拷贝失败"; return $false }
+    $sz = (Get-ChildItem -LiteralPath $Dest -Recurse -File | Measure-Object Length -Sum).Sum
+    Write-Host ("[OK] quality-lite 就绪: {0} ({1:N1} MB)" -f $Dest, ($sz / 1MB))
+    return $true
+}
+
 Write-Host "== RTL 工具链检测 =="
 $iverilog = Find-RtlTool 'iverilog.exe' $ws
 $vvp      = Find-RtlTool 'vvp.exe'      $ws
 $gtkwave  = Find-RtlTool 'gtkwave.exe'  $ws
 $verible = Find-RtlTool 'verible-verilog-format.exe' $ws
 $python   = Find-Py
+$qualityRoot = Get-RtlQualityRoot $ws
+$yosys = Find-RtlQualityTool 'yosys.exe' 'yosys\bin' $ws
+$slang = Find-RtlQualityTool 'slang.exe' 'slang\bin' $ws
+$sby   = Find-RtlQualityTool 'sby.py'    'sby\sbysrc' $ws
 $ok = $true
 foreach ($row in @(
     @{N='iverilog (编译)'; V=$iverilog},
     @{N='vvp (仿真)     '; V=$vvp},
     @{N='GTKWave (波形) '; V=$gtkwave},
-    @{N='Verible (格式化)'; V=$verible},
-    @{N='Python (生成器)'; V=$python}
+    @{N='Python (生成器)'; V=$python},
+    @{N='Yosys (综合/LEC)'; V=$yosys},
+    @{N='slang (lint)  '; V=$slang},
+    @{N='sby (formal)  '; V=$sby},
+    @{N='Verible (可选)'; V=$verible; Optional=$true}
 )) {
     if ($row.V) { Write-Host ("[OK]   {0}  -> {1}" -f $row.N, $row.V) }
+    elseif ($row.Optional) { Write-Host ("[OPT]  {0}" -f $row.N) }
     else        { Write-Host ("[MISS] {0}" -f $row.N); $ok = $false }
 }
-Write-Host ("== 结果: {0} ==" -f $(if ($ok) { '齐全' } else { '有缺失，可 -Install 部署便携工具链' }))
+if ($qualityRoot) { Write-Host "quality-lite: $qualityRoot" }
+Write-Host ("== 结果: {0} ==" -f $(if ($ok) { '齐全' } else { '有缺失，可 -Install/-Bundle 或 -Offline 部署' }))
 
 if ($Auto -and -not $ok) {
     Write-Host ""
@@ -127,6 +177,27 @@ if ($Offline) {
         if ($LASTEXITCODE -ge 8) { Write-Host "[WARN] verible 恢复失败" }
         else { Write-Host "[OK] verible 就绪: $(Join-Path $vDest 'bin\verible-verilog-format.exe')" }
     }
+    # quality-lite 可选组件：离线包如含 toolchain\quality-lite 则恢复到 iverilog 缓存同级
+    $qTmp = Join-Path $tmp 'toolchain\quality-lite'
+    if (Test-Path -LiteralPath (Join-Path $qTmp 'yosys\bin\yosys.exe')) {
+        $qDest = Join-Path (Split-Path $dest -Parent) 'quality-lite'
+        Write-Host "  quality-lite -> $qDest"
+        $null = Copy-QualityLite $qTmp $qDest
+    } else {
+        Write-Host "[OPT] 离线包不含 quality-lite（Yosys/slang/sby），仅基础仿真工具可用"
+    }
+    # 工具清单（可选）：仅在工作区尚无 tools\manifest.json 时恢复
+    $mTmp = Join-Path $tmp 'toolchain\manifest.json'
+    if (Test-Path -LiteralPath $mTmp) {
+        $mDest = Join-Path $ws 'tools\manifest.json'
+        if (Test-Path -LiteralPath $mDest) {
+            Write-Host "[OPT] 保留已有清单: $mDest"
+        } else {
+            New-Item -ItemType Directory -Force -Path (Split-Path $mDest -Parent) | Out-Null
+            Copy-Item -LiteralPath $mTmp -Destination $mDest -Force
+            Write-Host "[OK] 工具清单: $mDest"
+        }
+    }
     Remove-Item -LiteralPath $tmp -Recurse -Force
     $sz = (Get-ChildItem -LiteralPath $dest -Recurse -File | Measure-Object Length -Sum).Sum
     Write-Host ("  完成: {0:N1} MB 已就位。" -f ($sz / 1MB))
@@ -178,3 +249,17 @@ Write-Host "  拷贝中..."
 robocopy $src $dest /E /NFL /NDL /NJH /NJS | Out-Null
 if ($LASTEXITCODE -ge 8) { Write-Host "robocopy 失败"; exit 1 }
 Write-Host ("  完成: {0:N1} MB 已就位。" -f ((Get-ChildItem -LiteralPath $dest -Recurse -File | Measure-Object Length -Sum).Sum / 1MB))
+
+# quality-lite（Yosys/slang/sby）一并部署：-Install 放缓存根同级，-Bundle 放工作区 tools
+$qSrc = $QualitySource
+if (-not $qSrc) { $qSrc = Get-RtlQualityRoot $ws }
+if ($qSrc) {
+    if ($Install) { $qDest = Join-Path (Split-Path $dest -Parent) 'quality-lite' }
+    else          { $qDest = Join-Path $ws 'tools\quality-lite' }
+    Write-Host ""
+    Write-Host "== 部署 quality-lite: $qSrc  ->  $qDest =="
+    $null = Copy-QualityLite $qSrc $qDest
+} else {
+    Write-Host ""
+    Write-Host "[OPT] 未找到 quality-lite 来源（Yosys/slang/sby），跳过。可用 -QualitySource 指定。"
+}

@@ -33,6 +33,9 @@ RULE_ADVICE = {
            '信号保持的最后一个 else 写 else;，不要用 begin/end 包空语句。'),
     'R8': ('一个 always 块只驱动一个信号', 2,
            '把同一 always 块内的多信号赋值拆成多个 always 块，每块只驱动一个 reg。'),
+    'R9': ('时钟只允许上沿触发（复位沿例外）', 12,
+           '时序逻辑统一用 @(posedge clk)；异步复位允许 @(negedge rst_n)，'
+           '但 negedge 只能用于复位信号，不得用 negedge 时钟或电平敏感时钟。'),
 }
 
 
@@ -59,8 +62,11 @@ def check(s2, lines):
         errs.append((ln, rule, msg))
 
     # R3: low-active reset written fully
-    for m in re.finditer(r'!rst_n\b', s2):
-        err(s2[:m.start()].count('\n') + 1, 'R3', '使用 "rst_n == 1\'b0"，禁止 "!rst_n"')
+    for m in re.finditer(r'!\s*([A-Za-z_]\w*)', s2):
+        sig = m.group(1)
+        if re.search(r'rst|reset', sig, re.I):
+            err(s2[:m.start()].count('\n') + 1, 'R3',
+                '使用 "%s == 1\'b0"，禁止 "!%s"' % (sig, sig))
     # R5: input ports carry no type keyword
     for m in re.finditer(r'input\s+wire\b', s2):
         err(s2[:m.start()].count('\n') + 1, 'R5', '"input wire" 应改为 "input"（input 默认就是 wire）')
@@ -72,19 +78,41 @@ def check(s2, lines):
     for m in re.finditer(r'\bfunction\b', s2):
         err(s2[:m.start()].count('\n') + 1, 'R6', '禁止使用 function；改用 wire + assign')
     # R4: every case has default; default writes the signal explicitly
-    ncase = len(re.findall(r'\bcase\s*\(', s2))
+    ncase = len(re.findall(r'\bcase[xz]?\s*\(', s2))
     ndef = len(re.findall(r'\bdefault\s*:', s2))
     if ncase != ndef:
         err(0, 'R4', '共 %d 个 case 但只有 %d 个 default（每个 case 都必须写 default）' % (ncase, ndef))
-    for m in re.finditer(r'\bdefault\s*:\s*(;|begin)\b', s2):
+    for m in re.finditer(r'\bdefault\s*:', s2):
         seg = s2[m.start():m.start() + 200]
-        if re.match(r'\bdefault\s*:\s*;', seg) or re.match(r'\bdefault\s*:\s*begin\s*\n\s*;', seg):
+        if re.match(r'\bdefault\s*:\s*;', seg):
+            err(s2[:m.start()].count('\n') + 1, 'R4',
+                'default 必须显式对信号赋值（保持 -> 写自赋值），禁止空语句')
+        elif re.match(r'\bdefault\s*:\s*begin\s*\n\s*;', seg):
             err(s2[:m.start()].count('\n') + 1, 'R4',
                 'default 必须显式对信号赋值（保持 -> 写自赋值），禁止空语句')
     # R7: hold else written as "else ;" (no begin/end)
-    for m in re.finditer(r'else\s+begin\s*\n\s*;\s*\n', s2):
+    for m in re.finditer(r'else\s+begin\s*\n\s*;\s*(?://[^\n]*)?\n', s2):
         err(s2[:m.start()].count('\n') + 1, 'R7', '保持分支应写 "else ;"，不要用 begin/end 包空语句')
-    # R8: one always block per signal
+    for m in re.finditer(r'else\s+begin\s*;\s*end\b', s2):
+        err(s2[:m.start()].count('\n') + 1, 'R7', '保持分支应写 "else ;"，不要用 begin/end 包空语句')
+    # R9: clocking discipline.  All @(...) sensitivity lists must be edge lists
+    # on posedge, except negedge on a reset signal.  @(*) / always_comb are fine.
+    for m in re.finditer(r'\balways(?:_ff)?\s*@\s*\(([^)]*)\)', s2):
+        sens = m.group(1).strip()
+        if sens in ('*',):
+            continue
+        edges = list(re.finditer(r'\b(posedge|negedge)\s+([A-Za-z_]\w*)', sens))
+        for em in edges:
+            if em.group(1) == 'negedge' and not re.search(r'rst|reset', em.group(2), re.I):
+                err(s2[:m.start()].count('\n') + 1, 'R9',
+                    'negedge 只能用于复位信号，检测到 negedge %s' % em.group(2))
+        rest = re.sub(r'\b(posedge|negedge)\s+[A-Za-z_]\w*', '', sens)
+        rest = re.sub(r'\bor\b|,|\s+', '', rest)
+        if rest:
+            err(s2[:m.start()].count('\n') + 1, 'R9',
+                '敏感列表含非上沿事件 "%s"；时序逻辑统一 @(posedge clk)' % sens)
+    # R8: one always block per signal.  Locate the matching end by whole-word
+    # tokens (the old substring scan mistook "endcase" for "end").
     i = 0
     while True:
         mm = re.search(r'\balways\b', s2[i:])
@@ -92,27 +120,28 @@ def check(s2, lines):
             break
         start = i + mm.start()
         rest = s2[start:]
-        bb = rest.find('begin')
-        if bb == -1:
-            break
-        depth = 0
-        j = bb
-        while j < len(rest):
-            if rest[j:j + 5] == 'begin':
-                depth += 1
-                j += 5
-            elif rest[j:j + 3] == 'end':
-                depth -= 1
-                j += 3
-                if depth == 0:
-                    break
-            else:
-                j += 1
-        body = rest[bb:j]
+        bm = re.search(r'\bbegin\b', rest)
+        if bm:
+            depth = 0
+            endpos = len(rest)
+            for tm in re.finditer(r'\b(begin|end)\b', rest[bm.start():]):
+                if tm.group(1) == 'begin':
+                    depth += 1
+                else:
+                    depth -= 1
+                    if depth == 0:
+                        endpos = bm.start() + tm.end()
+                        break
+            body = rest[bm.start():endpos]
+        else:
+            semi = rest.find(';')
+            body = rest[:semi + 1] if semi >= 0 else rest
         lhs = set()
-        for lm in re.finditer(r'([A-Za-z_][A-Za-z0-9_]*)\s*(?:\[[^\]]*\])?\s*<=\s*(?!=)', body):
-            lhs.add(lm.group(1))
-        for lm in re.finditer(r'([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(?!=)', body):
+        # Assignments normally start a statement line.  Restrict to line starts
+        # so comparisons such as "if (a <= b)" are not mistaken for drivers.
+        for lm in re.finditer(
+                r'(?m)^[ \t]*([A-Za-z_]\w*)(?:\s*\[[^\]\n]+\])?\s*(<=|=)(?!=)',
+                body):
             lhs.add(lm.group(1))
         if len(lhs) > 1:
             err(s2[:start].count('\n') + 1, 'R8',

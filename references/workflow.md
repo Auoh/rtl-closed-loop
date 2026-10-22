@@ -34,13 +34,38 @@
 - `wave.ps1` 打开 GTKWave，核对：复位时序、首笔读写、满/空翻转、
   读数据一拍延迟、随机段与排空段
 
-## 7. 优化
-- 常见项：消除冗余寄存器、指针比较简化、参数化宽度、清理仿真残留
-- 任何改动后必须重跑 4-6（回归 → 负向 → 波形）
+## 7. 质量门禁
+- 一键：`rtlq.py all -W <工作区> -Top <module>`，阶段：lint → sim → negative → synth → lec → formal
+- lint：R1-R10 风格 0 违例、slang 0 warning、Yosys 结构检查无 latch/组合环
+- synth：cells/FF/depth 不超过 `config\ppa_budget.json`；超限必须优化或书面说明
+- lec：Yosys `equiv_opt` unproven=0；blacklist 仅用于工具无法匹配的等价状态编码
+- formal：`formal\<module>.sby` 的 prove 必须 `DONE (PASS)`；无配置时 SKIP 并说明
+- 产物：`report\quality.json`、`report\summary.md`、`report\logs\`
 
-## 8. 交付清单
+## 8. 优化（基线 → 改动 → 复测 → 对比 → 记录）
+- 常见项：消除冗余寄存器、指针比较简化、合并等价数据通路、参数化宽度、清理仿真残留
+- 固定顺序：
+  1. **记录基线**：改动前跑 `rtlq.py all -W <工作区> -Top <module>`；快照追加到
+     `report\history\<module>\<timestamp>.json`。要对比更早版本时，后续显式传
+     `--baseline <快照文件>`（`synth`/`all`/`compare` 均支持）。
+  2. **优化 RTL**：一次只做一组语义等价改动，保留原代码对照。
+  3. **复测**：重跑 4-7；`rtlq.py all` 会自动写新快照，并在
+     `report\summary_<module>.md` 生成「Baseline vs Current」小节。
+  4. **对比**：`rtlq.py compare -W <工作区> -Top <module>`，检查六阶段状态
+     （PASS/WARN/SKIP/FAIL/ERROR）与 cells/FF/depth 变化；退出码 0=PASS，
+     1=存在阶段回归、PPA 回退或预算超限。`--allow-ppa-regression` 仅放宽
+     PPA 增量判定，不放过预算超限。
+  5. **记录**：把优化理由、前后数据、命令与退出码写入
+     `docs\optimization_iteration.md`；有回归则回退该改动。
+- 注意：基线在写当前快照之前解析，历史快照只追加、不覆盖；`compare` 默认
+  取最近两次快照，因此中间不要插入无关的 `synth` 运行。
+
+## 9. 交付清单
 - `docs\<module>_spec.md`（需求规格）
 - `rtl\<module>.v`（RTL）
 - `tb\tb_<module>.v`（自检 TB）
+- `formal\<module>.sby` + `formal\<module>_fv.sv`（形式验证，适用时）
+- `config\ppa_budget.json` / `config\quality_policy.json`（质量配置）
+- `report\summary.md` + `report\quality.json`（质量报告）
 - `sim\<module>.log`（仿真日志）
-- 结论摘要：PASS/FAIL、覆盖点、遗留风险
+- 结论摘要：PASS/FAIL、覆盖点、PPA（cells/FF/depth）、遗留风险

@@ -33,6 +33,43 @@ function Get-RtlWorkspace {
     return (Resolve-Path -LiteralPath $W).Path
 }
 
+# quality-lite 根目录（Yosys + slang + sby）：环境变量优先 -> 工作区
+# tools\quality-lite -> 缓存根旁 quality-lite -> 纯 ASCII 根。
+function Get-RtlQualityRoot {
+    param([string]$Ws)
+    if ($env:RTL_QUALITY_LITE -and (Test-Path -LiteralPath $env:RTL_QUALITY_LITE)) {
+        return (Resolve-Path -LiteralPath $env:RTL_QUALITY_LITE).Path
+    }
+    if ($Ws) {
+        $p = Join-Path $Ws 'tools\quality-lite'
+        if (Test-Path -LiteralPath $p) { return (Resolve-Path -LiteralPath $p).Path }
+    }
+    $iver = Get-RtlToolchainRoot
+    if ($iver) {
+        $parent = Split-Path $iver -Parent
+        foreach ($q in @((Join-Path $parent 'quality-lite'), (Join-Path $iver 'quality-lite'))) {
+            if (Test-Path -LiteralPath $q) { return (Resolve-Path -LiteralPath $q).Path }
+        }
+    }
+    foreach ($root in @('C:\rtl-toolchain\quality-lite', 'D:\rtl-toolchain\quality-lite',
+                        'E:\rtl-toolchain\quality-lite', 'F:\rtl-toolchain\quality-lite')) {
+        if (Test-Path -LiteralPath $root) { return (Resolve-Path -LiteralPath $root).Path }
+    }
+    return $null
+}
+
+# 查找 quality-lite 内的可执行文件/脚本，例如：
+#   Find-RtlQualityTool 'yosys.exe' 'yosys\bin' $ws
+#   Find-RtlQualityTool 'sby.py'    'sby\sbysrc' $ws
+function Find-RtlQualityTool {
+    param([string]$Exe, [string]$RelDir, [string]$Ws)
+    $root = Get-RtlQualityRoot $Ws
+    if (-not $root) { return $null }
+    $p = Join-Path $root (Join-Path $RelDir $Exe)
+    if (Test-Path -LiteralPath $p) { return $p }
+    return $null
+}
+
 # 工具链查找顺序: 用户缓存(Get-RtlToolchainRoot) -> 工作区 tools -> PATH
 # 支持 iverilog（bin/gtkwave/bin）与 verible（同级目录 verible/bin）
 function Find-RtlTool {
@@ -111,6 +148,20 @@ function Restore-OfflineToolchain {
             robocopy $vTmp $vDest /E /NFL /NDL /NJH /NJS | Out-Null
             if ($LASTEXITCODE -ge 8) { Write-Host "[WARN] verible 恢复失败" }
             else { Write-Host "[AUTO] verible 就绪: $(Join-Path $vDest 'bin\verible-verilog-format.exe')" }
+        }
+        # quality-lite（Yosys/slang/sby）可选组件：与 iverilog 缓存同级
+        $qTmp = Join-Path $tmp 'toolchain\quality-lite'
+        if (Test-Path -LiteralPath (Join-Path $qTmp 'yosys\bin\yosys.exe')) {
+            $qDest = Join-Path (Split-Path $dest -Parent) 'quality-lite'
+            if (Test-Path -LiteralPath $qDest) {
+                $qi = Get-Item -LiteralPath $qDest
+                if ($qi.LinkType) { $qi.Delete() }
+                else { Remove-Item -LiteralPath $qDest -Recurse -Force }
+            }
+            New-Item -ItemType Directory -Force -Path $qDest | Out-Null
+            robocopy $qTmp $qDest /E /NFL /NDL /NJH /NJS | Out-Null
+            if ($LASTEXITCODE -ge 8) { Write-Host "[WARN] quality-lite 恢复失败" }
+            else { Write-Host "[AUTO] quality-lite 就绪: $qDest" }
         }
         return $dest
     } finally {

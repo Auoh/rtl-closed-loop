@@ -1,58 +1,55 @@
-﻿<#
-  wave.ps1 (rtl-closed-loop 技能) - 后台仿真 + GTKWave 波形
-  用法:
-    & '<skill>\scripts\wave.ps1' -W <工作区> -Top <module> [-Bug] [-NoGui]
-  实时加观测信号: GTKWave File->Enable Live View；搜索框输入信号名拖入即可
+<#
+  wave.ps1 (rtl-closed-loop) - run with DUMP_WAVE, verify VCD, open GTKWave.
+
+  Usage:
+    & '<skill>\scripts\wave.ps1' -W <workspace> -Top <module> [-Bug] [-NoGui] [-Fst]
+
+  Unlike the old script this fails if the testbench does not actually create a
+  non-empty sim/wave.vcd.  Simulation is run to completion before the viewer
+  opens, so the VCD is stable (no live-view race).
 #>
 param(
     [string]$W = '',
     [string]$Top = 'sync_fifo',
     [switch]$Bug,
-    [switch]$NoGui
+    [switch]$NoGui,
+    [switch]$Fst
 )
 $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot\rtl-tools.ps1"
 
 $ws = Get-RtlWorkspace $W
-$sim = Join-Path $ws 'sim'
-$rtl = Join-Path $ws 'rtl'
-$tb  = Join-Path $ws 'tb'
-if (-not (Test-Path -LiteralPath $rtl)) { Write-Host "工作区无效（缺少 rtl\ 目录）: $ws"; exit 2 }
-New-Item -ItemType Directory -Force -Path $sim | Out-Null
-
-$iverilog = Get-RtlToolOrDie 'iverilog.exe' $ws '编译'
-$vvp      = Get-RtlToolOrDie 'vvp.exe'      $ws '仿真'
-$gtkwave  = Find-RtlTool 'gtkwave.exe' $ws
-
-$defines = @()
-if ($Bug) { $defines += '-DINJECT_BUG=1' }
-$defines += '-DDUMP_WAVE'
-
-Write-Host "== compile ($Top) =="
-& $iverilog -g2005 -s "tb_$Top" -o (Join-Path $sim "$Top.vvp") `
-    @($defines) `
-    (Join-Path $rtl "$Top.v") `
-    (Join-Path $tb "tb_$Top.v")
-if ($LASTEXITCODE -ne 0) { Write-Host "COMPILE FAILED"; exit $LASTEXITCODE }
-
-$vcd = Join-Path $sim 'wave.vcd'
-Remove-Item -LiteralPath $vcd -ErrorAction SilentlyContinue
-
-Write-Host "== 后台启动仿真 =="
-$simProc = Start-Process -FilePath $vvp -ArgumentList "$Top.vvp" `
-    -WorkingDirectory $sim -WindowStyle Hidden -PassThru
-Write-Host "仿真 PID=$($simProc.Id) 运行中，VCD: $vcd"
-
-if ($NoGui -or -not $gtkwave) {
-    if (-not $gtkwave) { Write-Host "GTKWave 未找到，仅生成 VCD" }
-    $simProc.WaitForExit()
-    Write-Host "仿真结束，退出码=$($simProc.ExitCode)"
-    exit $simProc.ExitCode
+$cli = Join-Path $PSScriptRoot 'rtlq.py'
+if (-not (Test-Path -LiteralPath $cli)) {
+    Write-Host "[MISS] rtlq.py not found: $cli"
+    exit 3
 }
 
-Write-Host "== 打开 GTKWave（关闭窗口后脚本结束）=="
-Write-Host "提示: File -> Enable Live View 实时刷新；搜索框输入 dut.wptr 等拖入波形区"
-Start-Process -FilePath $gtkwave -ArgumentList "`"$vcd`"" -WorkingDirectory $sim -Wait
+$argv = @($cli, 'sim', '--workdir', $ws, '--top', $Top, '--wave')
+if ($Bug) { $argv += '--bug' }
+if ($Fst) { $argv += '--fst' }
 
-if (-not $simProc.HasExited) { $simProc.WaitForExit() }
-Write-Host "完成。波形文件: $vcd"
+$py = Get-Command python -ErrorAction SilentlyContinue
+if ($py) { & $py.Source @argv } else { & py -3.12 @argv }
+$code = $LASTEXITCODE
+if ($code -ne 0) {
+    Write-Host "[FAIL] simulation/wave generation failed (rc=$code)"
+    exit $code
+}
+
+$vcd = Join-Path $ws 'sim\wave.vcd'
+if (-not (Test-Path -LiteralPath $vcd) -or (Get-Item -LiteralPath $vcd).Length -eq 0) {
+    Write-Host "[FAIL] sim\wave.vcd was not produced; did the TB include DUMP_WAVE?"
+    exit 1
+}
+Write-Host "VCD: $vcd"
+
+if ($NoGui) { exit 0 }
+$gtkwave = Find-RtlTool 'gtkwave.exe' $ws
+if (-not $gtkwave) {
+    Write-Host "[WARN] GTKWave not found; VCD is ready at $vcd"
+    exit 0
+}
+Write-Host "== opening GTKWave =="
+Start-Process -FilePath $gtkwave -ArgumentList "`"$vcd`"" -WorkingDirectory (Join-Path $ws 'sim') -Wait
+exit 0

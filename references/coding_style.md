@@ -119,8 +119,9 @@ else ;  // hold
 - 检查：`scripts/format.ps1 -W <工作区> -Top <module>`（或 `-File <rtl.v>`），退出码 0 = FORMAT OK。
 - 报告：`scripts/format.ps1 -W <工作区> -Top <module> -Report docs\coding_report_<module>.md`，生成 Markdown 报告（违例明细表：行号/规则/问题/修改建议 + 规则总览）；无违例也输出 PASS 报告。
 - 自动格式化：`scripts/format.ps1 -Fix` 调用 verible-verilog-format（`--indentation_spaces=4 --wrap_end_else_clauses`）后追加安全规范修复（R5 input 去 wire、R7 保持 else 收成 `else;`），再做第二次 verible 对齐并复查（可同时带 `-Report` 出报告）。
-- 每次跑回归 `run.ps1` 编译前会自动执行上述格式化（`-NoFormat` 可关闭）；新增/修改 RTL 后直接跑回归即可触发。
-- 违例按 `R1..R8` 对应本文件条目定位；R3（`!rst_n`）与 R4（空 default）需手动补改，自动修复不做语义推断。
+- 回归入口 `run.ps1` 默认**不修改** RTL；需要自动格式化时显式加 `-FixFormat`。
+- 统一检查入口：`scripts/rtlq.py lint -W <工作区> -Top <module>`（R1-R10 + slang + Yosys 结构检查）。
+- 违例按 `R1..R10` 对应本文件条目定位；R3（`!rst_n`）与 R4（空 default）需手动补改，自动修复不做语义推断。
 - 外部提供的 RTL：并入工程前必须先跑一次带 `-Report` 的检查，报告随交付物归档到 `docs\`，并按建议修复后才能进入仿真流程。
 ## 11. 附：验证建议（TB 激励纪律）
 - 同步接口信号（`tx_wr`/`tx_data`/`rx_rd`/`rst_n`）禁止在 `@(posedge clk)` 后用阻塞赋值驱动（会在时钟沿 active 区与 DUT 各 always 块竞争采样，拆分 always 块后会导致 mem/指针错位）。

@@ -1,68 +1,59 @@
-﻿<#
-  run.ps1 (rtl-closed-loop 技能) - 编译 + 仿真回归
-  用法:
-    & '<skill>\scripts\run.ps1' -W <工作区> -Top <module> [-Bug] [-Wave] [-NoFormat]
-    工作区 = 包含 rtl\ tb\ 的模块工程根（默认当前目录）
-    编译前自动执行格式调整（verible + 规范修复）；-NoFormat 关闭
+<#
+  run.ps1 (rtl-closed-loop) - compile + run the self-checking testbench.
+
+  Usage:
+    & '<skill>\scripts\run.ps1' -W <workspace> -Top <module> [-Bug] [-Wave]
+                                [-Files a.v,b.v] [-Timeout 120] [-FixFormat]
+
+  This is now a thin wrapper around rtlq.py sim:
+    - all rtl/*.v and rtl/*.sv files are compiled automatically;
+    - -g2012 is used by default (override with policy);
+    - the run is bounded by a timeout;
+    - RTL is never modified unless -FixFormat is explicitly requested;
+    - -Wave checks that sim/wave.vcd is actually produced.
 #>
 param(
     [string]$W = '',
     [string]$Top = 'sync_fifo',
     [switch]$Bug,
     [switch]$Wave,
-    [switch]$NoFormat
+    [switch]$NoFormat,       # deprecated, kept for compatibility (default is no mutation)
+    [switch]$FixFormat,
+    [string[]]$Files = @(),
+    [int]$Timeout = 0
 )
 $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot\rtl-tools.ps1"
 
 $ws = Get-RtlWorkspace $W
-$rtl = Join-Path $ws 'rtl'
-$tb  = Join-Path $ws 'tb'
-$sim = Join-Path $ws 'sim'
-if (-not (Test-Path -LiteralPath $rtl)) { Write-Host "工作区无效（缺少 rtl\ 目录）: $ws"; exit 2 }
-New-Item -ItemType Directory -Force -Path $sim | Out-Null
+$cli = Join-Path $PSScriptRoot 'rtlq.py'
+if (-not (Test-Path -LiteralPath $cli)) {
+    Write-Host "[MISS] rtlq.py not found: $cli"
+    exit 3
+}
 
-$iverilog = Get-RtlToolOrDie 'iverilog.exe' $ws '编译'
-$vvp      = Get-RtlToolOrDie 'vvp.exe'      $ws '仿真'
-Write-Host "workspace: $ws"
-Write-Host "iverilog : $iverilog"
-
-$defines = @()
-if ($Bug)  { $defines += '-DINJECT_BUG=1' }
-if ($Wave) { $defines += '-DDUMP_WAVE' }
-
-$dutRtl = Join-Path $rtl "$Top.v"
-$dutTb  = Join-Path $tb  "tb_$Top.v"
-if (-not (Test-Path -LiteralPath $dutRtl)) { Write-Host "NOT FOUND: $dutRtl"; exit 2 }
-if (-not (Test-Path -LiteralPath $dutTb))  { Write-Host "NOT FOUND: $dutTb"; exit 2 }
-
-# 自动格式调整：每次修改后跑回归时生效（可 -NoFormat 关闭；异常不阻断编译）
-if (-not $NoFormat) {
-    try {
-        & "$PSScriptRoot\format.ps1" -File $dutRtl -Fix | Out-Null
+if ($FixFormat) {
+    Write-Host "== explicit format fix (RTL will be modified) =="
+    $fmt = Join-Path $PSScriptRoot 'format.ps1'
+    foreach ($f in @(Get-ChildItem -LiteralPath (Join-Path $ws 'rtl') -File -ErrorAction SilentlyContinue |
+                     Where-Object { $_.Extension -in '.v', '.sv' })) {
+        & $fmt -File $f.FullName -Fix | Out-Null
         if ($LASTEXITCODE -ne 0) {
-            Write-Host "[WARN] 编码规范检查未全绿（不影响编译）: format.ps1 exit $LASTEXITCODE"
+            Write-Host "[WARN] format check still has issues: $($f.Name)"
         }
-    } catch {
-        Write-Host "[WARN] 自动格式化跳过: $($_.Exception.Message)"
     }
 }
 
-Write-Host "== compile ($Top) =="
-& $iverilog -g2005 -s "tb_$Top" -o (Join-Path $sim "$Top.vvp") `
-    @($defines) `
-    $dutRtl `
-    $dutTb
-if ($LASTEXITCODE -ne 0) { Write-Host "COMPILE FAILED (exit $LASTEXITCODE)"; exit $LASTEXITCODE }
+$argv = @($cli, 'sim', '--workdir', $ws, '--top', $Top)
+if ($Bug) { $argv += '--bug' }
+if ($Wave) { $argv += '--wave' }
+if ($Timeout -gt 0) { $argv += @('--timeout', [string]$Timeout) }
+if ($Files.Count -gt 0) { $argv += '--files'; $argv += $Files }
 
-Write-Host "== run =="
-Push-Location $sim
-try {
-    & $vvp "$Top.vvp" 2>&1 | Tee-Object -FilePath (Join-Path $sim "$Top.log")
-} finally {
-    Pop-Location
+$py = Get-Command python -ErrorAction SilentlyContinue
+if ($py) {
+    & $py.Source @argv
+} else {
+    & py -3.12 @argv
 }
-$code = $LASTEXITCODE
-Write-Host ""
-Write-Host ("vvp exit code: {0} -> {1}" -f $code, $(if ($code -eq 0) { 'PASS' } else { 'FAIL' }))
-exit $code
+exit $LASTEXITCODE
