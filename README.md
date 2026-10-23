@@ -178,6 +178,10 @@ PPA 是 Yosys generic 映射后的相对值，用于回归对比，不等同于�
 `compare` 默认对比最近两次；也可 `--baseline <文件|时间戳|目录>` 指定更早的基线。
 出现阶段回归或超预算时退出码为 1。
 
+`all` 内嵌的 Baseline vs Current 对比默认**只打印/写报告，不改变退出码**（记录
+实验基线时不应因有意的 PPA 变化而失败）。CI 或交付门禁需要让回归卡住整体结论时，
+加 `all --fail-on-regression`；也可照旧单独运行 `compare` 并检查退出码。
+
 ### 7.2 质量策略
 
 `config/quality_policy.json` 控制超时、阶段开关和 LEC blacklist：
@@ -195,6 +199,11 @@ PPA 是 Yosys generic 映射后的相对值，用于回归对比，不等同于�
 
 LEC blacklist 只能用于工具无法匹配的等价状态编码，**不得用来掩盖真实不等价**；
 放进去之前先确认清空后仍 `unproven=0`。
+
+状态机优先按 `references/coding_style.md` 第 13 节写：状态寄存器加
+`(* fsm_encoding = "none" *)`，F2 的每个 `case`/`if` 分支都显式赋值 `state_next`
+（保持分支写 `state_next = state;`，不要写 `else ;`）。这能避免 Yosys 把状态
+寄存器综合成带时钟使能的 `$adffe`，让空白 blacklist 也能 `unproven=0`。
 
 ## 8. 形式验证（sby）
 
@@ -221,7 +230,25 @@ formal/<top>_fv.sv
 注意：本技能附带的 quality-lite **不包含 `yosys-smtbmc`**，因此必须写 `[engines] abc pdr`；
 写 `smtbmc` 或省略 `[engines]` 时 `rtlq.py formal` 会直接报错并给出提示。
 
-`[files]` 中的路径相对于 `-W` 工作区，sby 会把它们复制到 `report/formal/<top>/`。
+`[files]` 中的路径相对于 `-W` 工作区，**不是**相对于 `.sby` 文件所在目录；
+写成 `../rtl/<top>.v` 会报 `FileNotFoundError`。sby 会先把文件复制到
+`report/formal/<top>/`，因此 `[script]` 里的 `read` 用复制后的 basename
+（`<top>.v`、`<top>_fv.sv`），不要带 `rtl/`、`formal/` 前缀。
+
+完整可运行模板见 `references/examples/formal/`（`demo_ctr.sby`、
+`demo_ctr_fv.sv` 和示例 DUT）：
+
+- `prep` 会执行 `formalff -ff2anyinit`，所有未初始化触发器在形式视图中初值任意。
+  单条 `initial assume(rst_n == 0)` 只约束时间 0，不能清除其余任意初值。模板用
+  `initial boot = 0`，在前 `RESET_CYCLES` 拍 `assume(rst_n == 0)`，之后
+  `assume(rst_n == 1)`，并且只在 `boot >= RESET_CYCLES` 时检查断言。
+- 异步复位设计在 `prep` 后加 `clk2fflogic`；仅同步复位时可省略。
+- quality-lite 也**不含 `yosys-witness`**，`abc pdr` 失败时没有可读 witness/VCD
+  （日志显示 `did not produce any traces`）。用 `report/formal/<top>/engine_0/logfile.txt`
+  和 `report/logs/formal_<top>.log` 定位失败断言，或把 `mode prove` 临时改为
+  `mode bmc`、`[engines] abc bmc3` 并缩短深度（`abc pdr` 只允许 prove 模式），
+  再按断言语义在 TB 中构造定向激励（`sim --wave`）。需要真正 witness 时换用
+  完整 Yosys（含 `yosys-smtbmc`/`yosys-witness`）。
 
 ## 9. 离线部署
 

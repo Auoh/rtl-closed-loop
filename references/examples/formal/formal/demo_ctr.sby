@@ -1,0 +1,29 @@
+# Minimal SymbiYosys prove task for a single clock + async active-low reset.
+#
+# Paths in [files] are relative to the workspace passed with -W (the directory
+# that contains rtl/ and formal/), NOT to this .sby file.  sby copies the files
+# into report/formal/<top>/ and runs there, so [script] `read` uses basenames.
+#
+# This layout is ready to run after copying rtl/ and formal/ into a workspace:
+#   python scripts/rtlq.py formal -W <workspace> --top demo_ctr
+
+[tasks]
+prove
+
+[options]
+mode prove
+depth 24
+aigsmt none
+
+[engines]
+abc pdr
+
+[files]
+rtl/demo_ctr.v
+formal/demo_ctr_fv.sv
+
+[script]
+read -formal -sv demo_ctr.v
+read -formal -sv demo_ctr_fv.sv
+prep -top demo_ctr_fv
+clk2fflogic

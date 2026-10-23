@@ -35,7 +35,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
-VERSION = "1.1.2"
+VERSION = "1.1.3"
 SKILL_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_POLICY: Dict[str, Any] = {
     "lint": {
@@ -1201,8 +1201,12 @@ def _sby_command(ctx: Context) -> List[str]:
 
 
 def _sby_engines(sby_file: Path) -> List[str]:
-    """First token of every line in the [engines] section (mode headers allow
-    `[engines prove]`).  An empty list means sby would reject the config."""
+    """Full command line of every [engines] entry (mode headers allow
+    `[engines prove]`).  An empty list means sby would reject the config.
+
+    Keep the whole line (`abc pdr`) instead of only the engine name so report
+    readers can tell which options were actually used.
+    """
     engines: List[str] = []
     section = ""
     for raw in _read_text(sby_file).splitlines():
@@ -1217,8 +1221,13 @@ def _sby_engines(sby_file: Path) -> List[str]:
             continue
         line = line.split("#", 1)[0].strip()
         if line:
-            engines.append(line.split()[0])
+            engines.append(line)
     return engines
+
+
+def _sby_engine_name(entry: str) -> str:
+    parts = entry.split()
+    return parts[0].lower() if parts else ""
 
 
 def _find_yosys_smtbmc(ctx: Context) -> Optional[Path]:
@@ -1261,7 +1270,7 @@ def do_formal(ctx: Context, args: argparse.Namespace) -> Dict[str, Any]:
             "reason": "sby 配置缺少可用的 [engines] 段（sby 会报 lacking engine configuration）",
             "hint": "在 %s 中增加:\n[engines]\nabc pdr" % sby_file,
         }
-    if any(e.lower() in ("smtbmc", "yosys-smtbmc") for e in engines) and \
+    if any(_sby_engine_name(e) in ("smtbmc", "yosys-smtbmc") for e in engines) and \
             not _find_yosys_smtbmc(ctx):
         return {
             "command": "formal", "status": "ERROR", "top": top,
@@ -1693,13 +1702,23 @@ def do_all(ctx: Context, args: argparse.Namespace) -> Dict[str, Any]:
     snap_path = _write_snapshot(ctx, top, snap)
     quality["snapshot"] = str(snap_path)
     if baseline_data is not None:
+        baseline_cmp = _compare_snapshots(
+            baseline_data, snap, ctx, top, baseline_path, snap_path,
+            allow_ppa_regression=getattr(args, "allow_ppa_regression", False))
         quality["baseline"] = {
             "file": str(baseline_path),
             "generated_at": baseline_data.get("generated_at"),
-            "compare": _compare_snapshots(
-                baseline_data, snap, ctx, top, baseline_path, snap_path,
-                allow_ppa_regression=getattr(args, "allow_ppa_regression", False)),
+            "compare": baseline_cmp,
         }
+        if getattr(args, "fail_on_regression", False) and \
+                baseline_cmp.get("status") != "PASS":
+            # The six stages themselves passed, but the embedded baseline
+            # comparison found a regression.  Off by default: `all` is also
+            # used to record a baseline, and an intentional experiment should
+            # not fail the gate by itself.  Opt in with --fail-on-regression.
+            quality["status"] = "FAIL"
+            snap["status"] = "FAIL"
+            _write_json(snap_path, snap)
     ctx.write_stage("quality", quality)
     _render_summary(ctx, quality)
     # Keep a per-top copy so running another module does not overwrite the
@@ -1868,6 +1887,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--baseline", default=None, help="对比的基准快照（默认上一个快照）")
     p.add_argument("--allow-ppa-regression", action="store_true",
                    help="PPA 指标变差不判失败（预算仍校验）")
+    p.add_argument("--fail-on-regression", action="store_true",
+                   help="内嵌 Baseline vs Current 有阶段/PPA 回归或超预算时整体判 FAIL")
     p.set_defaults(func=cmd_all)
 
     p = sub.add_parser("compare", help="对比最近两次快照或指定 baseline")

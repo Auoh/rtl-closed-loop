@@ -20,15 +20,16 @@ always @(posedge clk or negedge rst_n) begin
         state <= state_next;
     end
 end
-// F2: 次态组合逻辑（default 显式赋值，避免 latch）
+// F2: 次态组合逻辑（每个分支显式赋值，避免 latch 并保持 LEC 友好）
 always @(*) begin
-    state_next = state;
     case (state)
         IDLE: begin
             if (go) begin
                 state_next = BUSY;
             end
-            else ;  // hold
+            else begin
+                state_next = IDLE;  // 显式保持
+            end
         end
         default: begin
             state_next = IDLE;
@@ -103,7 +104,7 @@ else ;  // hold
 
 ## 7. case / default
 - 每个 `case` 必须写出 `default` 分支，禁止省略；`default` 必须显式写出对信号的赋值，禁止空语句或空 begin-end。
-- 组合逻辑的 `case`（如 F2 次态）：所有分支（含 `default`）都必须显式写出对输出的赋值，避免综合推断 latch；建议块首用默认赋值兜底。
+- 组合逻辑的 `case`（如 F2 次态）：所有分支（含 `default`）都必须显式写出对输出的赋值，避免综合推断 latch。F2 的保持分支写 `state_next = state;`，不要写 `else ;`（原因见第 13 节）。
 - 时序逻辑 `case` 的 `default` 表示保持：写显式自赋值，如 `default: cnt <= cnt;`（不要写 `default: ;`）。
 
 ## 8. 不使用 function
@@ -124,8 +125,10 @@ else ;  // hold
 - 违例按 `R1..R10` 对应本文件条目定位；R3（`!rst_n`）与 R4（空 default）需手动补改，自动修复不做语义推断。
 - 外部提供的 RTL：并入工程前必须先跑一次带 `-Report` 的检查，报告随交付物归档到 `docs\`，并按建议修复后才能进入仿真流程。
 ## 11. 附：验证建议（TB 激励纪律）
-- 同步接口信号（`tx_wr`/`tx_data`/`rx_rd`/`rst_n`）禁止在 `@(posedge clk)` 后用阻塞赋值驱动（会在时钟沿 active 区与 DUT 各 always 块竞争采样，拆分 always 块后会导致 mem/指针错位）。
-- 统一采用"沿后 `#1` 偏移再阻塞赋值"；不要用同一拍多个任务对同一信号做非阻塞赋值（背靠背调用会撞 NBA 区）。
+- 同步接口信号（`tx_wr`/`tx_data`/`rx_rd`/`rst_n`）在 `@(posedge clk)` 上用**非阻塞赋值（NBA）**驱动，零延时提交；DUT 在同一沿采样到的是沿前值（上一拍驱动的值），符合真实时序逻辑语义。
+- TB 在上升沿用**阻塞赋值捕获** DUT 实际采样的输入到 `*_cap`；参考模型在负沿使用 `*_cap` 计算期望并检查输出（此时 DUT 输出已稳定）。全程**不使用 `#1` 或任何延时**。
+- 不要用"沿后 `#1` 偏移再阻塞赋值"驱动激励：它会在负沿制造人为跳变，违背"理想仿真、零延时"约定（见 `toolchain.md`「激励与时序约定」）。
+- 同一拍多个任务不要对同一信号重复赋值；`gen_tb.py` 生成的模板已按上述约定实现，手工 TB 也照此执行。
 
 ## 12. 时钟纪律（R9 / R10）
 - R9：时钟只允许上沿触发。时序逻辑统一 `always @(posedge clk ...)`；禁止
@@ -142,4 +145,51 @@ else ;  // hold
   （槽0 判定位于上沿前 1 拍，以补偿 1 拍输出寄存流水；相位细节以参考实现注释为准）；
   不靠采样慢时钟、也不把对齐责任交给“复位在帧边界释放”。
 - 现行参考实现：`rtl/ch_num_gen.v`（clk_31m25 仅作时钟驱动慢域帧标记 FF +
-  2FF 同步 + 相位预置锁相（SLOT_LOCK=3），寄存输出帧首通道号对齐 31.25M 上沿；全 posedge 触发、无时钟采样。
+  2FF 同步 + 相位预置锁相（SLOT_LOCK=3），寄存输出帧首通道号对齐 31.25M 上沿；全 posedge 触发、无时钟采样。）
+
+## 13. LEC 友好的状态机写法
+
+Yosys LEC（`equiv_opt ... synth`）逐线比较 RTL 与综合网表。三段式 FSM 若依赖
+“块首默认赋值 + `else ;` 保持”，综合时 `opt_dff` 会把状态寄存器改写成带时钟
+使能的 `$adffe`（DFFE）：网表里的 `state_next` 只在使能有效时才有意义，LEC 对
+`state_next` 做组合比较就会失败（状态寄存器本身却可能是 proven）。按下面写法
+通常可以让 `lec.blacklist` 保持为空：
+
+1. 状态寄存器加 `(* fsm_encoding = "none" *)`，禁止 Yosys 对状态位重新编码：
+   ```verilog
+   (* fsm_encoding = "none" *) reg [1:0] state;
+   ```
+2. F2 的每个 case 分支、每条 if/else 路径都**显式赋值** `state_next`；保持分支
+   写 `state_next = state;`，不要写 `else ;`，也不要只靠块首默认值兜底：
+   ```verilog
+   always @(*) begin
+       case (state)
+           ST_IDLE: begin
+               if (go) begin
+                   state_next = ST_BUSY;
+               end
+               else begin
+                   state_next = ST_IDLE;  // 显式保持
+               end
+           end
+           ST_BUSY: begin
+               state_next = done ? ST_IDLE : ST_BUSY;
+           end
+           default: begin
+               state_next = ST_IDLE;
+           end
+       endcase
+   end
+   ```
+   这样 `state_next` 始终是 state 与输入的纯组合函数，综合网表不会把它改写成
+   时钟使能形式，LEC 可直接比较。
+3. F3 的输出用 `state == ST_*` 显式译码，不要挤进 F2。
+4. 先按第 1、2 条修改。仍有个别 `state_next` / 状态位 unproven 时，先确认清空
+   blacklist 后是否只剩该信号；只有确认差异来自工具重编码/DFFE 提取、且功能
+   等价时，才允许把该信号加入 `config/quality_policy.json` 的 `lec.blacklist`。
+   blacklist 不得用于掩盖真实的不等价。
+
+注意：第 5 节“最后一个 else 写 `else ;` 表示保持”的简写**不适用于 F2 的
+`state_next`**；次态必须显式写出保持值。验证方式：把 `rtl/ch_num_gen.v` 的 F2
+按本节改写（保持分支显式赋值）后，空 blacklist 下 `lec` 从 2 个 unproven 变为
+`unproven=0`（34/34 proven）。

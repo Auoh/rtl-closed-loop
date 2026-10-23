@@ -2,6 +2,39 @@
 
 rtl-closed-loop 技能的版本变更记录。版本号遵循语义化版本（SemVer）。
 
+## [v1.1.3] - 2026-10-23
+
+### Fixed
+
+- `formal` 结果中的 `engines` 现在保留 `[engines]` 整行（如 `["abc pdr"]`），
+  不再只保留首个 token（`["abc"]`），报告可看出实际引擎/选项；smtbmc 可用性
+  检查改为按首 token 判断，兼容 `[engines prove]` 等带模式头的写法。
+- `all` 新增 `--fail-on-regression`：内嵌 Baseline vs Current 有阶段回归、PPA
+  回退或预算超限时整体判 FAIL。默认仍只写报告、不改变退出码，避免记录实验
+  基线时把有意改动误判为失败。
+
+### Added
+
+- `references/examples/formal/`：最小可运行 sby 模板（`demo_ctr.sby` +
+  `demo_ctr_fv.sv` + 示例 DUT），演示 anyinit（`formalff -ff2anyinit`）、
+  多拍复位 `assume`、断言 `boot >= RESET_CYCLES` 门控、异步复位后的
+  `clk2fflogic`，以及 `[files]` 相对 `-W` 工作区的路径规则。
+- 形式验证调试文档：quality-lite 无 `yosys-witness` 时不会生成可读 witness/VCD，
+  给出 logfile、`mode bmc` + `abc bmc3`、定向仿真和完整 Yosys 的替代定位方法。
+
+### Changed
+
+- `references/coding_style.md` 第 11 节 TB 激励统一为 **NBA 零延时**：上升沿
+  NBA 驱动激励、`*_cap` 阻塞捕获、负沿参考模型检查，全程无 `#1`；删除“沿后
+  `#1` 偏移再阻塞赋值”的旧写法，与 `gen_tb.py`、`toolchain.md` 一致。
+- 新增第 13 节「LEC 友好的状态机写法」：状态寄存器加
+  `(* fsm_encoding = "none" *)`，F2 的每个 case/if 分支显式赋值 `state_next`
+  （保持分支写 `state_next = state;`，不要 `else ;`），避免 `opt_dff` 把状态
+  寄存器综合成 DFFE 导致 `state_next` unproven；同步更新 §1/§7 示例及
+  `SKILL.md`、`workflow.md`、`README.md`。
+- README 更新 formal/LEC 小节：anyinit 模板、`[files]` 基准目录、无 witness
+  限制、`all --fail-on-regression` 语义。
+
 ## [v1.1.2] - 2026-10-23
 
 ### Fixed

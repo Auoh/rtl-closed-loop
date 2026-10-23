@@ -65,7 +65,10 @@ description: >-
    - lec：Yosys 等价性证明 unproven=0
    - formal：`formal\<module>.sby` 的 sby prove 通过（无 sby 时该阶段 SKIP，需在交付物中说明）；
      quality-lite 不含 `yosys-smtbmc`，`.sby` 必须显式写 `[engines]` 且用 `abc pdr`
-     （缺失或写 smtbmc 时 formal 直接 ERROR 并提示，见 toolchain.md）
+     （缺失或写 smtbmc 时 formal 直接 ERROR 并提示，见 toolchain.md）。
+     最小可运行模板见 `references\examples\formal\`：`initial boot = 0` + 复位窗口内
+     多拍 `assume(rst_n == 0)` 清除 anyinit，断言用 `boot >= RESET_CYCLES` 门控；
+     `[files]` 路径相对 `-W` 工作区，不是相对 `.sby` 目录。
    - PPA 指标是 Yosys generic 映射后的相对量，用于回归对比，不等同于签核 STA
 8. **优化（记录→改动→复测→对比）**：
    a. 改动前先跑 `rtlq.py all` 记录基线快照（或明确用 `--baseline <文件>` 指定更早基线）；
@@ -81,5 +84,5 @@ description: >-
 - 每轮 RTL 改动后必须重跑完整回归与质量门禁（至少 sim + lint + synth + lec）
 - RTL 编写/审查必须遵守编码规范 [coding_style.md](references/coding_style.md)；外部 RTL 必须先生成规范报告（`format.ps1 -Report`，归档 `docs\coding_report_<module>.md`）并按其建议修复；新增规范要求时同步刷新该文档
 - 质量策略（超时/开关/blacklist）放 `config\quality_policy.json`，PPA 预算放 `config\ppa_budget.json`；预算调整必须在交付说明中记录理由
-- LEC 的 blacklist 只允许用于工具无法匹配的等价状态编码（如 `state_next`），不得掩盖真实不等价
+- LEC 的 blacklist 只允许用于工具无法匹配的等价状态编码（如 `state_next`），不得掩盖真实不等价；优先按 [coding_style.md](references/coding_style.md) 第 13 节的 LEC 友好 FSM 写法（`(* fsm_encoding = "none" *)` + F2 每个分支显式赋值 `state_next`）保持 blacklist 为空
 - 详细步骤模板见 [workflow.md](references/workflow.md)

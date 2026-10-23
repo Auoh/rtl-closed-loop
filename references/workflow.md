@@ -41,8 +41,14 @@
 - 一键：`rtlq.py all -W <工作区> --top <module>`，阶段：lint → sim → negative → synth → lec → formal
 - lint：R1-R10 风格 0 违例、slang 0 warning、Yosys 结构检查无 latch/组合环
 - synth：cells/FF/depth 不超过 `config\ppa_budget.json`；超限必须优化或书面说明
-- lec：Yosys `equiv_opt` unproven=0；blacklist 仅用于工具无法匹配的等价状态编码
-- formal：`formal\<module>.sby` 的 prove 必须 `DONE (PASS)`；无配置时 SKIP 并说明
+- lec：Yosys `equiv_opt` unproven=0。状态机按 `coding_style.md` 第 13 节写
+  （`(* fsm_encoding = "none" *)` + F2 每个分支显式赋值 `state_next`），通常可
+  保持 blacklist 为空；blacklist 仅用于工具无法匹配的等价编码，不得掩盖真实不等价。
+- formal：`formal\<module>.sby` 的 prove 必须 `DONE (PASS)`；无配置时 SKIP 并说明。
+  最小可运行模板见 `references\examples\formal\`：`initial boot = 0` + 复位窗口内
+  `assume(rst_n == 0)` 清除 anyinit，断言用 `boot >= RESET_CYCLES` 门控；
+  `[files]` 路径相对 `-W` 工作区。quality-lite 无 `yosys-witness`，失败时按
+  `toolchain.md`「形式验证调试」用日志和定向仿真定位。
 - 产物：`report\quality.json`、`report\summary.md`、`report\logs\`
 
 ## 8. 优化（基线 → 改动 → 复测 → 对比 → 记录）
@@ -57,7 +63,9 @@
   4. **对比**：`rtlq.py compare -W <工作区> --top <module>`，检查六阶段状态
      （PASS/WARN/SKIP/FAIL/ERROR）与 cells/FF/depth 变化；退出码 0=PASS，
      1=存在阶段回归、PPA 回退或预算超限。`--allow-ppa-regression` 仅放宽
-     PPA 增量判定，不放过预算超限。
+     PPA 增量判定，不放过预算超限。CI 里若只跑 `all`，内嵌 Baseline vs Current
+     对比**默认不改变 `all` 的退出码**（用于记录基线时不应因实验性改动失败）；
+     需要门禁时加 `all --fail-on-regression`。
   5. **记录**：把优化理由、前后数据、命令与退出码写入
      `docs\optimization_iteration.md`；有回归则回退该改动。
 - 注意：基线在写当前快照之前解析，历史快照只追加、不覆盖；`compare` 默认

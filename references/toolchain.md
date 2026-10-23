@@ -54,6 +54,26 @@
 - 形式验证引擎：quality-lite 的 Yosys **不含 `yosys-smtbmc`**。`formal\<module>.sby`
   必须显式写 `[engines]` 且使用 `abc pdr`；省略 `[engines]` 或写 `smtbmc` 时
   `rtlq formal` 直接返回 ERROR 并提示修改，不会等到 sby 深层报错。
+- 形式验证调试：quality-lite 也**不含 `yosys-witness`**。`abc pdr` 失败时 sby
+  无法生成可读的 witness/VCD（日志显示 `did not produce any traces`），只能看到
+  assertion 编号和失败帧。定位顺序：
+  1. 查 `report\formal\<module>\engine_0\logfile.txt` 和
+     `report\logs\formal_<module>.log`，找出失败 assertion 的编号/名称与帧号；
+  2. 临时把 `.sby` 改为 `mode bmc`、`[engines] abc bmc3`、缩短 `depth`，先找
+     最短反例（`abc pdr` 只允许 prove 模式，直接切 bmc 会报
+     `ABC command 'pdr' is only valid in prove mode`）；仍无 witness 时，按断言
+     语义在 TB 里构造定向激励，用 `sim --wave` 看波形；
+  3. 需要真正的 witness/VCD 时，换用完整 Yosys（含 `yosys-smtbmc` /
+     `yosys-witness`）并使用 `[engines] smtbmc`；quality-lite 不支持。
+- `[files]` 相对路径：以 `-W` 工作区为基准，**不是** `.sby` 文件所在目录。
+  例：`.sby` 在 `<ws>\formal\`、DUT 在 `<ws>\rtl\` 时写 `rtl/<top>.v`；
+  写成 `../rtl/<top>.v` 会报 FileNotFoundError。sby 先把文件复制到
+  `report\formal\<top>\` 再执行 `[script]`，因此 `read` 要用复制后的 basename。
+- 最小可运行模板：`references\examples\formal\`（`demo_ctr.sby`、
+  `demo_ctr_fv.sv` 和示例 DUT）。演示 `initial boot = 0`、复位窗口内
+  `assume(rst_n == 0)`、断言用 `boot >= RESET_CYCLES` 门控，以及 anyinit
+  （`prep` 的 `formalff -ff2anyinit`）为什么不能用单条
+  `initial assume(rst_n == 0)` 处理。
 - iverilog 查找顺序：工作区 `tools\iverilog` → `RTL_TOOLCHAIN` →
   `$HOME\.codex\rtl-toolchain` → 盘符根（`C:\rtl-toolchain` 等），缓存根同时支持
   `<root>\bin` 与 `<root>\iverilog\bin` 两种布局（`setup.ps1 -Install` 两种都可能
@@ -200,8 +220,9 @@ Linux/macOS 用 `scripts/run.sh [模块] [bug|wave] [工作区]`。
 8. Yosys 在 Windows 上要求正斜杠路径（`D:/<工作区>/...`）；rtlq 已统一转换，手工脚本需注意。
 9. sby 必须显式传 `--yosys <yosys.exe>` / `--abc <yosys-abc.exe>`，并设
    `PYTHONUTF8=1`；本机默认 Python 是 3.14 alpha，sby 用 `py -3.12` 更稳。
-10. sby 的 `[files]` 会把源文件复制到工作目录（`report/formal/<top>`），
-    修改 RTL 后必须重跑；rtlq 每次运行前会清理旧工作目录。
+10. sby 的 `[files]` 路径相对 `-W` 工作区（不是 `.sby` 所在目录），文件会先被
+    复制到 `report/formal/<top>` 再执行 `[script]`；修改 RTL 后必须重跑，
+    rtlq 每次运行前会清理旧工作目录。
 11. Yosys `equiv_opt -blacklist` 的文件名不能带 shell 引号（rtlq 已按裸路径传入）。
 12. Verible `--rules` 与项目 R1-R10 规则不是一一对应；以 `format_check.py`
     的 R1-R10 为准，Verible 仅做格式化和补充 lint。
