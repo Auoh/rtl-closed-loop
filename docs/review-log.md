@@ -58,6 +58,12 @@ formal `DONE (PASS)`、`engines=["abc pdr"]`；compare rc=0（70/18/8 → 63/18/
 | D12 | P3 | `rtlq.py all` | `all` 退出码不反映内嵌 Baseline vs Current 的 PPA 回退 | `be2c8f7`：新增 `--fail-on-regression`，默认行为不变 |
 | D13 | P3 | `toolchain.md` | sby `[files]` 相对基准不明确 | `be2c8f7`：明确相对 `-W` 工作区，并写入模板注释 |
 | D14 | P2 | `coding_style.md §13` | 空黑名单下 FSM 的 LEC 写法无指导 | `be2c8f7`：`fsm_encoding="none"` + 全分支显式次态 |
+| D15 | P2 | `scripts/rtlq.py:56` | 默认 `lec.blacklist=["state_next"]` 静默掩盖 unproven | `bfe9c45`：默认空；输出 `unproven_signals` 与 `[HINT]`（仅提示不排除）；显式空 `--blacklist` 不再被 `or` 回退 |
+| D16 | P3 | `scripts/gen_tb.py:12` | docstring 时序描述与生成代码相反 | `bfe9c45`：改为「上升沿 NBA 驱动、负沿检查」 |
+| D17 | P3 | `references/workflow.md:18-20` | 未说明 REF_DECLS 状态需 `initial` 初始化 | `bfe9c45`：补说明与 3 行示例，`toolchain.md:132` 同步 |
+| D18 | P3 | `scripts/format.ps1:42,49,57,60` | 裸 `python`，Store 桩下失败 | `bfe9c45`：`rtl-tools.ps1` 新增 `Find-RtlPython`（跳过 exit 49 桩），format/run/wave 复用 |
+| D19 | P3 | `references/examples/formal/` | 缺协议级多周期属性模板 | `bfe9c45`：新增 `pulse_stretch` rtl/sby/fv + README（影子计数器、boot 位宽坑） |
+| D20 | P3 | `scripts/gen_tb.py:88-90,216-225` | 定向激励无保留区 | `bfe9c45`：新增 `DIRECTED_BEGIN/END`，重生成保留 |
 
 D4 复验证据（v1.1.2，我的独立复现）：
 - 无 `RTL_TOOLCHAIN`、工作区无 `tools/`：`doctor` rc 0，iverilog 指向 `C:\rtl-toolchain\iverilog\bin`；`sim` rc 0，`checks=4478 errors=0`。
@@ -77,7 +83,11 @@ D8-D14 复验证据（v1.1.3，我的独立复现）：
 - D12：`reg_adder` 临时副本加 1 位 keep 寄存器（48 cells/10 ff，预算内）：默认 `all` rc 0 但内嵌基线显示 `FAIL (cells, ff)`；加 `--fail-on-regression` → rc 1、`quality.json status=FAIL`。
 - D9/D11/D13：`coding_style.md` 已无「沿后 #1」；`toolchain.md:57/68` 与 README 写明无 `yosys-witness`、`[files]` 相对 `-W` 工作区。
 
-## 待修复（v1.1.3 重跑中新发现，2026-10-23）
+## 待修复
+
+无。D15-D20 已在 v1.1.4 修复，复验证据如下。
+
+### D15-D20 原始问题（v1.1.3 重跑发现，已修复）
 
 | ID | 级别 | 位置 | 问题 | 期望修复 |
 |---|---|---|---|---|
@@ -99,6 +109,20 @@ D8-D14 复验证据（v1.1.3，我的独立复现）：
 - G6「`--bug` 只有一个 `INJECT_BUG` 宏、无法选择注入点」：技能契约只要求负向演练
   至少一次并可检出；多注入点属增强需求，不是缺陷。
 
+### v1.1.4 复验证据（评审独立复现，`bfe9c45`）
+
+- D15：`ch_num_gen.v` + 无策略文件 → rc=1，`proven=32 unproven=2`，`blacklist=[]`，
+  `unproven_signals=["state_next"]`，打印 HINT；`--blacklist`（空参数）→ rc=1；
+  显式 `{"ch_num_gen":["state_next"]}` → rc=0。
+- D16：docstring 已为「上升沿 NBA 驱动、负沿检查」。
+- D17：`workflow.md:18-30` 与 `toolchain.md:132` 均含 `initial` 赋初值说明与示例。
+- D18：PATH 前置 `python.bat`/`python3.bat`（均 exit 49）→ `format.ps1` rc=0、
+  `FORMAT OK`，探测回退到 `py`。
+- D19：模板原样 `formal pulse_stretch` → rc=0 `DONE (PASS)`、engines `["abc pdr"]`；
+  把 `cnt == LATENCY-1` 改早一拍 → rc=1 `DONE (FAIL)`。
+- D20：生成后在 `DIRECTED_BEGIN/END` 内写入标记，重生成后标记仍在；TB 用 iverilog 编译通过。
+- 回归：`reg_adder` 在 v1.1.4 下 `all` rc=0（47/9/15，lec 9/0）；`py_compile` 通过。
+
 D4/D5 原始复现命令（已修复，保留供回归）：
 
 ```
@@ -118,4 +142,5 @@ rtlq.py sim -W <workspace> --top uart_tx     # 不设 RTL_TOOLCHAIN
 - `v1.1.1`（`51c1ac3`）：D1 修复，已推送；远端 annotated tag `6b9b08e`。
 - `v1.1.2`（`dd3a5a1`）：D4/D5/D6 修复 + README，已推送。
 - `v1.1.3`（`be2c8f7`）：D8-D14 修复（formal 模板、FSM/LEC 文档、engines 字段、回归门禁），已推送。
+- `v1.1.4`（`bfe9c45`）：D15-D20 修复（LEC 默认 blacklist、TB 定向区、Python 探测、协议级 formal 模板），已推送。
 - 流程：确认问题点后先把当前状态打 tag 并 push，再执行修改；修复复验通过后打版本 tag 并 push。
