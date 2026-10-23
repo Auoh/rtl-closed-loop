@@ -36,7 +36,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
-VERSION = "1.1.9"
+VERSION = "1.1.10"
 SKILL_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_POLICY: Dict[str, Any] = {
     "lint": {
@@ -1221,6 +1221,10 @@ def do_lec(ctx: Context, args: argparse.Namespace) -> Dict[str, Any]:
     lines = ["read_verilog -sv " + " ".join(_q(f) for f in files),
              "hierarchy -check -top " + top,
              "proc", "memory", "opt_clean",
+             # Flatten before equiv_opt: hierarchical $paramod instances have
+             # no SAT model in the equivalence miter, so a multi-module design
+             # fails with "No SAT model available for cell <submodule>_gate".
+             "flatten",
              "equiv_opt" + flags + " synth"]
     r = _yosys(ctx, "lec_%s" % top, lines, ctx.stage_timeout("lec"))
     proven = 0

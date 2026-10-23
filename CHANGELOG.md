@@ -2,6 +2,29 @@
 
 rtl-closed-loop 技能的版本变更记录。版本号遵循语义化版本（SemVer）。
 
+## [v1.1.10] - 2026-10-24
+
+### Fixed
+
+- **D38（P2，LEC 可用性）** 多模块设计在 `equiv_opt` 前未展平，Yosys 对
+  `$paramod` 层次实例报 `No SAT model available for cell ...`，LEC 无法生成
+  可证明的等价 miter。现在 `lec` 脚本在 `proc/memory/opt_clean` 后、
+  `equiv_opt` 前执行 `flatten`：
+  - `read_verilog -sv`、`hierarchy -check -top`、`multiclock` 等语义不变；
+  - 单模块设计行为不变；多模块/参数化子模块设计可正常完成等价性检查。
+- 版本号同步为 1.1.10。
+
+### Acceptance
+
+- SPI 验收用例 `spi_master`（3 模块，含 `$paramod` FIFO）：修复前
+  `ERROR: No SAT model available for cell u_tx_fifo_gate ($paramod...)`；
+  修复后 `proven=502 unproven=0`，LEC PASS。
+- 同一工作区 `rtlq.py all --top spi_master`：六阶段 PASS、rc0；
+  sim `checks=680 errors=0 mon_checks=12171 mon_errors=0`；
+  negative `expected=FAIL actual=FAIL`；synth `cells=1339 ff=381 depth=19`；
+  formal `DONE (PASS, rc=0)`；6 个 formal 变异全部被捕获。
+- 单模块回归：`sync_fifo`（副本）`proven=51 unproven=0`，LEC PASS。
+
 ## [v1.1.9] - 2026-10-23
 
 ### Fixed

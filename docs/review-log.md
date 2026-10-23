@@ -474,3 +474,36 @@ rtlq.py synth ... --fail-on-tool-mismatch
 - 回归：sync_fifo 1050/0、97/39/6、51/0；rr_arbiter 534/0、30/2/10、11/0；全 rc0。
 
 **版本**：`v1.1.9`（annotated `fcbfdeb`）指向 `2782941`，已推送。
+
+### D38（P2）多模块 LEC 未展平导致 `$paramod` 无 SAT model（2026-10-24）
+
+**复现**：SPI 验收用例 `D:/tmp/rtl-acceptance/run4`（3 模块，FIFO 以
+`$paramod` 例化），运行
+`rtlq.py all -W D:/tmp/rtl-acceptance/run4 --top spi_master`：
+lint/sim/negative/synth 通过，LEC 阶段失败：
+`ERROR: No SAT model available for cell u_tx_fifo_gate ($paramod...spi_fifo)`。
+
+**位置**：`scripts/rtlq.py` 的 `do_lec`（约 1221 行）生成的 Yosys 脚本：
+`read_verilog -sv ...; hierarchy -check -top ...; proc; memory; opt_clean;
+equiv_opt -multiclock -assert synth`。
+
+**根因**：`equiv_opt` 在层次化设计上直接构造等价 miter；参数化子模块
+（`$paramod`）没有独立的 SAT model，miter 无法求解，LEC 无法给出证明。
+
+**修复**：在 `proc/memory/opt_clean` 之后、`equiv_opt` 之前插入 `flatten`。
+单模块设计该步骤为无操作；多模块参数化设计先展平再生成 miter。
+
+**实现方自测（2026-10-24，run4）**：
+- 修复前：LEC 失败（`No SAT model ...`）；修复后：
+  `proven=502 unproven=0`，LEC PASS。
+- 同工作区 `rtlq.py all --top spi_master`：六阶段 PASS、rc0；
+  lint `style=0 slang_warn=0`；sim `checks=680 errors=0 mon_checks=12171
+  mon_errors=0`；negative `expected=FAIL actual=FAIL`；synth
+  `cells=1339 ff=381 depth=19`；formal `DONE (PASS, rc=0)`。
+- 形式非空洞：6 个变异（reset_cs_low、fifo_count_step2、cs_never_asserted、
+  fifo_full_at_8、irq_ignores_enable、tx_done_early）均产生反例，
+  证据见 `run4/report/mutation/spi_master/mutant_notes.md`。
+- 单模块回归：`d34-fifo` 副本 `sync_fifo`，`proven=51 unproven=0`，LEC PASS。
+
+**版本**：`v1.1.10`（本提交）。按当前约定未由实现方 push/tag；由 peer 独立
+复验后推送并打 tag。
