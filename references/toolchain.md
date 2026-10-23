@@ -279,6 +279,49 @@ DUT 为寄存器 `q <= q + d` 与组合 `y = q + d`，同一套激励 22 个检�
 - 只比较了部分输出、或 `checks` 恒为 0 的 TB——`rtlq` 不会因此报错，必须人工看
   检查次数与 testplan 载体。
 
+## PPA 语义与可比性
+
+`rtlq synth` / `all` 的 PPA 指标来自 Yosys generic 映射，含义固定如下：
+
+| 指标 | 来源 | 含义 | 不是什么 |
+|---|---|---|---|
+| cells | `synth` 后 `stat -json` 的 `design.num_cells` | 通用门级映射后的单元数（与工艺库无关） | 标准单元面积/门数，不能当面积签核值 |
+| ff | `stat -json` 的 `num_cells_by_type` 中 `dff*` 单元计数 | 触发器数量 | 含 clock gating / 扫描链的 FF 数 |
+| depth | `synth` 后 `ltp -noff` 的 `length=` | 纯组合逻辑级数 | 含 FF clk-to-q 与线延迟的时序路径深度 |
+
+因此 PPA 的正确用法是**同一版本、同一脚本、同一 RTL 下的相对回归**，不是绝对面积/
+频率结论，也不是签核 STA。
+
+### 可复现性（实测）
+
+在 `D:\tmp\rtl-acceptance\t3-ppa`（`pwm_gen`，Yosys 0.66，同一 RTL/脚本）连续三次
+运行 `rtlq.py synth`，固定输出文件的 SHA-256 完全一致：
+
+```text
+stat: 42a4bbcbdffc5b5955f22567429e615e71cab8a2de3d8ebb744ab0180add2cf7  (pwm_gen_stat.json)
+ltp : c7725b13882408c54364b30ec04fcab4f28394f4114deb618bcf33a9b5508db9  (pwm_gen_ltp.txt)
+```
+
+同一版本 + 同一脚本 + 同一 RTL 是字节级可复现的前提；任何一项变化都可能改变
+`cells/ff/depth`，此时 delta 不能解释为 RTL 优化收益。
+
+### 版本记录与比对
+
+- 每次 `synth` / `all` 写快照时，顶层统一记录 `tools`：
+  `iverilog / yosys / slang / verible / python`（取各工具版本输出的首行）。
+- `compare`（以及 `synth`/`all` 的内嵌对比）比较两边 `tools.yosys` 的规范化首行：
+  - 两边都有且相同：正常比较，`RESULT: PASS`；
+  - 两边都有但不同：输出两边版本并告警，默认 `RESULT: WARN`、退出码 0，
+    不破坏已有流水线；加 `--fail-on-tool-mismatch` 后 `RESULT: FAIL`、退出码 1；
+  - 任一边是旧快照、没有 `tools` 字段：标记「不可判定」，**不报错**，其余阶段/
+    预算判定照常执行。
+- 版本不一致时仍会打印 cells/ff/depth 的 delta，但该 delta 不可解释；先统一工具
+  版本，再判断优化是否有效。
+- 预算门禁（`max_cells/max_ff/max_depth`）语义不变：始终按当前
+  `config/ppa_budget.json` 校验当前快照，与工具版本无关。
+- 跨 Yosys 版本、跨综合脚本、跨映射流程的 PPA **不可比**；本工具不做跨工艺库
+  映射，因此也不提供跨工艺的面积/时序结论。
+
 ## 已知坑（必须遵守）
 1. iverilog 装在含空格路径（如 `D:\01 software\iverilog`）时，其内部子进程（ivlpp）
    会解析失败。用 `setup.ps1 -Install` 部署到无空格缓存根；`rtlq`/`run.ps1`/`wave.ps1`

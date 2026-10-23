@@ -36,7 +36,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
-VERSION = "1.1.7"
+VERSION = "1.1.8"
 SKILL_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_POLICY: Dict[str, Any] = {
     "lint": {
@@ -1155,11 +1155,17 @@ def cmd_synth(ctx: Context, args: argparse.Namespace) -> int:
     for v in result.get("violations") or []:
         print("  PPA budget exceeded: %s actual=%s limit=%s" %
               (v["metric"], v["actual"], v["limit"]))
+    cmp = None
     if baseline_data is not None:
         cmp = _compare_snapshots(
             baseline_data, snap, ctx, top, baseline_path, snap_path,
-            allow_ppa_regression=getattr(args, "allow_ppa_regression", False))
+            allow_ppa_regression=getattr(args, "allow_ppa_regression", False),
+            fail_on_tool_mismatch=getattr(args, "fail_on_tool_mismatch", False))
         print("  baseline %s -> %s: %s" % (baseline_path, snap_path, cmp["status"]))
+        print("  " + _tool_version_line(cmp))
+        if cmp.get("tool_check", {}).get("mismatch"):
+            print("  [WARN] Yosys 版本不一致，PPA delta 不可直接比较"
+                  "（默认 WARN；--fail-on-tool-mismatch 判 FAIL）")
         for key in ("cells", "ff", "depth"):
             row = (cmp.get("metrics") or {}).get(key) or {}
             if row.get("delta") is not None:
@@ -1169,7 +1175,9 @@ def cmd_synth(ctx: Context, args: argparse.Namespace) -> int:
         print(result["tail"])
     if args.json:
         print(json.dumps(result, ensure_ascii=False, indent=2))
-    return 0 if result["status"] in ("PASS", "WARN") else 1
+    tool_gate = bool(cmp and getattr(args, "fail_on_tool_mismatch", False)
+                     and cmp.get("tool_check", {}).get("mismatch"))
+    return 0 if result["status"] in ("PASS", "WARN") and not tool_gate else 1
 
 
 # ---------------------------------------------------------------------------
@@ -1536,6 +1544,10 @@ def _snapshot_payload(ctx: Context, result: Dict[str, Any], command: str) -> Dic
     snap["top"] = result.get("top") or ctx.top
     snap["generated_at"] = result.get("generated_at") or _now()
     snap["workspace"] = str(ctx.ws)
+    # Every snapshot records the tool versions used for the run, so a later
+    # PPA comparison can tell whether the numbers are comparable at all.
+    # Old snapshots simply lack this field; that is "unknown", not an error.
+    snap["tools"] = result.get("tools") or ctx.versions()
     if command == "synth":
         snap["stages"] = {"synth": result}
         snap["ppa"] = result if result.get("metrics") else None
@@ -1619,10 +1631,66 @@ def _delta_text(v: Any) -> str:
     return "n/a" if v is None else ("%+d" % int(v))
 
 
+def _norm_tool_version(value: Any) -> Optional[str]:
+    """First non-empty line, whitespace-normalized; None when unknown."""
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    first = text.splitlines()[0].strip()
+    return re.sub(r"\s+", " ", first) or None
+
+
+def _tool_check(base: Dict[str, Any], cur: Dict[str, Any]) -> Dict[str, Any]:
+    """Compare recorded tool versions; only Yosys gates PPA comparability."""
+    bt = base.get("tools") if isinstance(base.get("tools"), dict) else {}
+    ct = cur.get("tools") if isinstance(cur.get("tools"), dict) else {}
+    rows: Dict[str, Any] = {}
+    names = []
+    for name in ("yosys", "slang", "iverilog", "verible", "python"):
+        if name in bt or name in ct:
+            names.append(name)
+    for name in names:
+        before = _norm_tool_version(bt.get(name))
+        after = _norm_tool_version(ct.get(name))
+        rows[name] = {
+            "baseline": before,
+            "current": after,
+            "same": None if before is None or after is None else before == after,
+        }
+    y = rows.get("yosys") or {}
+    both = y.get("baseline") is not None and y.get("current") is not None
+    if both:
+        mismatch = y.get("baseline") != y.get("current")
+        state = "mismatch" if mismatch else "same"
+    else:
+        mismatch = False
+        state = "not_comparable"
+    return {
+        "status": state,
+        "mismatch": mismatch,
+        "compared": "yosys",
+        "baseline": y.get("baseline"),
+        "current": y.get("current"),
+        "all": rows,
+    }
+
+
+def _tool_version_line(cmp: Dict[str, Any]) -> str:
+    tc = cmp.get("tool_check") or {}
+    label = {"same": "一致", "mismatch": "不一致",
+             "not_comparable": "不可判定（旧快照缺 tools）"}.get(
+                 tc.get("status"), "不可判定")
+    return "yosys: baseline=%s current=%s (%s)" % (
+        _fmt_value(tc.get("baseline")), _fmt_value(tc.get("current")), label)
+
+
 def _compare_snapshots(base: Dict[str, Any], cur: Dict[str, Any], ctx: Context, top: str,
                        baseline_file: Optional[Path] = None,
                        current_file: Optional[Path] = None,
-                       allow_ppa_regression: bool = False) -> Dict[str, Any]:
+                       allow_ppa_regression: bool = False,
+                       fail_on_tool_mismatch: bool = False) -> Dict[str, Any]:
     stage_rows: Dict[str, Any] = {}
     stage_regressions: List[str] = []
     stage_improvements: List[str] = []
@@ -1690,12 +1758,25 @@ def _compare_snapshots(base: Dict[str, Any], cur: Dict[str, Any], ctx: Context, 
             violations.append(v)
             seen.add(k)
 
+    tools = _tool_check(base, cur)
     regressions = list(stage_regressions) + list(ppa_regressions)
     if violations:
         regressions.append("budget")
+    warnings: List[str] = []
+    if tools["mismatch"]:
+        if fail_on_tool_mismatch:
+            regressions.append("tool_version")
+        else:
+            warnings.append("tool_version")
+    if regressions:
+        status = "FAIL"
+    elif warnings:
+        status = "WARN"
+    else:
+        status = "PASS"
     return {
         "command": "compare",
-        "status": "PASS" if not regressions else "FAIL",
+        "status": status,
         "top": top,
         "baseline": {"file": str(baseline_file) if baseline_file else None,
                      "generated_at": base.get("generated_at")},
@@ -1707,6 +1788,9 @@ def _compare_snapshots(base: Dict[str, Any], cur: Dict[str, Any], ctx: Context, 
         "violations": violations,
         "regressions": regressions,
         "improvements": list(stage_improvements) + list(ppa_improvements),
+        "warnings": warnings,
+        "tool_check": tools,
+        "tool_versions": tools["all"],
     }
 
 
@@ -1715,8 +1799,11 @@ def _comparison_md(cmp: Dict[str, Any]) -> List[str]:
     c = cmp.get("current") or {}
     regs = cmp.get("regressions") or []
     imps = cmp.get("improvements") or []
+    tc = cmp.get("tool_check") or {}
     if regs:
         concl = "存在回归"
+    elif tc.get("mismatch"):
+        concl = "工具版本不一致，PPA 指标不可比（WARN）"
     elif imps:
         concl = "无回归，存在改善"
     else:
@@ -1729,6 +1816,22 @@ def _comparison_md(cmp: Dict[str, Any]) -> List[str]:
         lines.append("- 回归项: %s" % ", ".join(str(x) for x in regs))
     if imps:
         lines.append("- 改善项: %s" % ", ".join(str(x) for x in imps))
+    tool_rows = cmp.get("tool_versions") or {}
+    if tool_rows:
+        lines += ["", "### 工具版本（PPA 可比性）", "",
+                  "| 工具 | Baseline | Current | 状态 |", "|---|---|---|---|"]
+        labels = {True: "一致", False: "不一致", None: "不可判定"}
+        for name, row in tool_rows.items():
+            lines.append("| %s | %s | %s | %s |" % (
+                name, _fmt_value(row.get("baseline")), _fmt_value(row.get("current")),
+                labels.get(row.get("same"), "不可判定")))
+        if tc.get("mismatch"):
+            lines.append("")
+            lines.append("- **Yosys 版本不一致**：cells/ff/depth 的 delta 不可解释；"
+                         "默认仅 WARN，加 `--fail-on-tool-mismatch` 判 FAIL。")
+        elif tc.get("status") == "not_comparable":
+            lines.append("")
+            lines.append("- Yosys 版本缺失（旧快照）：PPA 可比性不可判定，不报错。")
     lines += ["", "| 阶段 | Baseline | Current | 变化 |", "|---|---|---|---|"]
     for name in STAGE_ORDER:
         row = (cmp.get("stages") or {}).get(name) or {}
@@ -1868,18 +1971,23 @@ def do_all(ctx: Context, args: argparse.Namespace) -> Dict[str, Any]:
     if baseline_data is not None:
         baseline_cmp = _compare_snapshots(
             baseline_data, snap, ctx, top, baseline_path, snap_path,
-            allow_ppa_regression=getattr(args, "allow_ppa_regression", False))
+            allow_ppa_regression=getattr(args, "allow_ppa_regression", False),
+            fail_on_tool_mismatch=getattr(args, "fail_on_tool_mismatch", False))
         quality["baseline"] = {
             "file": str(baseline_path),
             "generated_at": baseline_data.get("generated_at"),
             "compare": baseline_cmp,
         }
-        if getattr(args, "fail_on_regression", False) and \
-                baseline_cmp.get("status") != "PASS":
+        regression_gate = (getattr(args, "fail_on_regression", False)
+                           and baseline_cmp.get("status") == "FAIL")
+        tool_gate = (getattr(args, "fail_on_tool_mismatch", False)
+                     and baseline_cmp.get("tool_check", {}).get("mismatch"))
+        if regression_gate or tool_gate:
             # The six stages themselves passed, but the embedded baseline
-            # comparison found a regression.  Off by default: `all` is also
-            # used to record a baseline, and an intentional experiment should
-            # not fail the gate by itself.  Opt in with --fail-on-regression.
+            # comparison found a regression / an opted-in tool mismatch.
+            # Off by default: `all` is also used to record a baseline, and an
+            # intentional experiment should not fail the gate by itself.
+            # A default (unflagged) tool-version mismatch is WARN, not FAIL.
             quality["status"] = "FAIL"
             snap["status"] = "FAIL"
             _write_json(snap_path, snap)
@@ -1916,6 +2024,10 @@ def cmd_all(ctx: Context, args: argparse.Namespace) -> int:
             base.get("file"), cmp.get("status"),
             (" (" + ", ".join(str(x) for x in cmp.get("regressions")) + ")")
             if cmp.get("regressions") else ""))
+        print("  " + _tool_version_line(cmp))
+        if cmp.get("tool_check", {}).get("mismatch"):
+            print("  [WARN] Yosys 版本不一致，PPA delta 不可直接比较"
+                  "（默认 WARN；--fail-on-tool-mismatch 判 FAIL）")
     print("report: %s" % (ctx.report_dir / "summary.md"))
     return 0 if q["status"] in ("PASS", "WARN") else 1
 
@@ -1936,10 +2048,15 @@ def cmd_compare(ctx: Context, args: argparse.Namespace) -> int:
     cur = _load_json(current_path, {})
     cmp = _compare_snapshots(
         base, cur, ctx, top, baseline_path, current_path,
-        allow_ppa_regression=getattr(args, "allow_ppa_regression", False))
+        allow_ppa_regression=getattr(args, "allow_ppa_regression", False),
+        fail_on_tool_mismatch=getattr(args, "fail_on_tool_mismatch", False))
     print("== rtlq compare: %s ==" % top)
     print("baseline: %s (%s)" % (baseline_path, base.get("generated_at") or "-"))
     print("current : %s (%s)" % (current_path, cur.get("generated_at") or "-"))
+    print(_tool_version_line(cmp))
+    if cmp.get("tool_check", {}).get("mismatch"):
+        print("[WARN] Yosys 版本不一致，PPA 指标不可直接比较"
+              "（默认 WARN；--fail-on-tool-mismatch 判 FAIL）")
     print("")
     print("%-8s %-8s %-8s %s" % ("stage", "baseline", "current", "change"))
     for name in STAGE_ORDER:
@@ -1965,12 +2082,14 @@ def cmd_compare(ctx: Context, args: argparse.Namespace) -> int:
     extra: List[str] = []
     if cmp.get("regressions"):
         extra.append("regressions: " + ", ".join(str(x) for x in cmp["regressions"]))
+    if cmp.get("warnings"):
+        extra.append("warnings: " + ", ".join(str(x) for x in cmp["warnings"]))
     if cmp.get("improvements"):
         extra.append("improvements: " + ", ".join(str(x) for x in cmp["improvements"]))
     print("RESULT: %s%s" % (cmp["status"], (" (" + "; ".join(extra) + ")") if extra else ""))
     if args.json:
         print(json.dumps(cmp, ensure_ascii=False, indent=2))
-    return 0 if cmp["status"] == "PASS" else 1
+    return 0 if cmp["status"] in ("PASS", "WARN") else 1
 
 
 def cmd_report(ctx: Context, args: argparse.Namespace) -> int:
@@ -2033,6 +2152,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--baseline", default=None, help="对比的基准快照（默认上一个快照）")
     p.add_argument("--allow-ppa-regression", action="store_true",
                    help="PPA 指标变差不判失败（预算仍校验）")
+    p.add_argument("--fail-on-tool-mismatch", action="store_true",
+                   help="基线 Yosys 版本不一致时判失败（默认仅 WARN）")
     p.set_defaults(func=cmd_synth)
 
     p = sub.add_parser("lec", help="Yosys 逻辑等价检查")
@@ -2057,6 +2178,8 @@ def build_parser() -> argparse.ArgumentParser:
                    help="PPA 指标变差不判失败（预算仍校验）")
     p.add_argument("--fail-on-regression", action="store_true",
                    help="内嵌 Baseline vs Current 有阶段/PPA 回归或超预算时整体判 FAIL")
+    p.add_argument("--fail-on-tool-mismatch", action="store_true",
+                   help="基线 Yosys 版本不一致时整体判 FAIL（默认仅 WARN）")
     p.set_defaults(func=cmd_all)
 
     p = sub.add_parser("compare", help="对比最近两次快照或指定 baseline")
@@ -2065,6 +2188,8 @@ def build_parser() -> argparse.ArgumentParser:
                    help="基准快照文件/时间戳（默认上一次快照）")
     p.add_argument("--allow-ppa-regression", action="store_true",
                    help="PPA 指标变差不判失败（预算仍校验）")
+    p.add_argument("--fail-on-tool-mismatch", action="store_true",
+                   help="基线 Yosys 版本不一致时判 FAIL（默认仅 WARN，rc 0）")
     p.set_defaults(func=cmd_compare)
 
     p = sub.add_parser("report", help="从 report/quality.json 重新生成 summary.md")

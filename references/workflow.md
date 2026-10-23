@@ -109,11 +109,15 @@
   3. **复测**：重跑 4-7；`rtlq.py all` 会自动写新快照，并在
      `report\summary_<module>.md` 生成「Baseline vs Current」小节。
   4. **对比**：`rtlq.py compare -W <工作区> --top <module>`，检查六阶段状态
-     （PASS/WARN/SKIP/FAIL/ERROR）与 cells/FF/depth 变化；退出码 0=PASS，
-     1=存在阶段回归、PPA 回退或预算超限。`--allow-ppa-regression` 仅放宽
-     PPA 增量判定，不放过预算超限。CI 里若只跑 `all`，内嵌 Baseline vs Current
+     （PASS/WARN/SKIP/FAIL/ERROR）与 cells/FF/depth 变化；退出码 0=PASS/WARN，
+     1=存在阶段回归、PPA 回退、预算超限，或加了 `--fail-on-tool-mismatch` 且
+     Yosys 版本不一致。`--allow-ppa-regression` 仅放宽 PPA 增量判定，不放过
+     预算超限。两边 Yosys 版本不一致时 PPA delta 不可解释：默认只告警
+     （WARN），CI 门禁可加 `--fail-on-tool-mismatch`；旧快照缺 `tools` 字段时
+     标记「不可判定」，不报错。CI 里若只跑 `all`，内嵌 Baseline vs Current
      对比**默认不改变 `all` 的退出码**（用于记录基线时不应因实验性改动失败）；
-     需要门禁时加 `all --fail-on-regression`。
+     需要门禁时加 `all --fail-on-regression`，工具版本门禁加
+     `all --fail-on-tool-mismatch`。
   5. **记录**：把优化理由、前后数据、命令与退出码写入
      `docs\optimization_iteration.md`；有回归则回退该改动。
 - 注意：基线在写当前快照之前解析，历史快照只追加、不覆盖；`compare` 默认

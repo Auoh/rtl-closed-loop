@@ -35,7 +35,7 @@ description: >-
 常用命令（<技能> = 本技能目录，如 `C:\Users\<你>\.agents\skills\rtl-closed-loop`）：
 - 环境自检：`& '<技能>\scripts\rtlq.ps1' doctor`
 - 全流程质量门禁：`& '<技能>\scripts\rtlq.ps1' all -W <工作区> -Top <module>`（lint→sim→负向→synth→LEC→formal）
-- 基线对比：`& '<技能>\scripts\rtlq.ps1' compare -W <工作区> -Top <module>`（默认对比最近两次快照；有回归/超预算退出码 1）
+- 基线对比：`& '<技能>\scripts\rtlq.ps1' compare -W <工作区> -Top <module>`（默认对比最近两次快照；有回归/超预算退出码 1；Yosys 版本不一致默认 WARN，加 `--fail-on-tool-mismatch` 判 FAIL）
 - 单项：`rtlq.ps1 lint|sim|synth|lec|formal -W <工作区> -Top <module>`
 - 每次 `synth`/`all` 自动追加快照 `report\history\<module>\<timestamp>.json`，不覆盖旧快照；
   `all` 的 `summary_<module>.md` 自动包含「Baseline vs Current」小节

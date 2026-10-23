@@ -2,6 +2,48 @@
 
 rtl-closed-loop 技能的版本变更记录。版本号遵循语义化版本（SemVer）。
 
+## [v1.1.8] - 2026-10-23
+
+### Added
+
+- **D36（P1，PPA 可比性）** PPA 跨版本对比补齐版本记录与告警：
+  - `_snapshot_payload` 对所有命令统一写顶层 `tools`（`iverilog` / `yosys` /
+    `slang` / `verible` / `python`，取各工具版本输出首行）；旧快照没有该字段
+    视为「不可判定」，不报错。
+  - `_compare_snapshots` 比较两边 `tools.yosys` 的规范化首行并输出两边版本：
+    同时存在且不同 → `tool_mismatch`，默认 `RESULT: WARN`、退出码 0（不破坏
+    已有流水线）；新增 `--fail-on-tool-mismatch`（`synth` / `all` / `compare`
+    均支持）后置 `FAIL`、退出码 1。缺字段或单边缺失 → `not_comparable`，
+    不告警。
+  - `all --fail-on-regression` 的判定从「对比状态不是 PASS」收紧为
+    「对比状态是 FAIL」，因此工具版本不一致的默认 WARN 不会误伤门禁；
+    `all --fail-on-tool-mismatch` 可单独让版本不一致卡住整体结论。
+  - `_comparison_md` 的 Baseline vs Current 增加工具版本表与不可比说明；
+    `compare`/`synth`/`all` 控制台均打印 baseline/current 的 Yosys 版本。
+  - 预算门禁语义不变：始终按当前 `config/ppa_budget.json` 校验当前快照。
+
+### Docs
+
+- `references/toolchain.md` 新增「PPA 语义与可比性」：明确 cells =
+  `stat -json` 的 `design.num_cells`、ff = DFF 计数、depth = `ltp -noff`
+  的组合级数；给出连续三次 `synth` 的 stat/ltp SHA-256 字节一致证据；
+  说明跨 Yosys 版本/跨综合脚本/跨映射流程不可比，且 PPA-lite 不是签核 STA。
+- `README.md`、`references/workflow.md`、`SKILL.md` 同步 compare 的
+  PASS/WARN/FAIL 退出码与 `--fail-on-tool-mismatch` 用法。
+
+### Acceptance
+
+- ① `t3-ppa/pwm_gen` 连续三次 `synth`：`pwm_gen_stat.json` 与
+  `pwm_gen_ltp.txt` 的 SHA-256 三次一致（`42a4bbcb…` / `c7725b13…`）。
+- ② 篡改快照 `tools.yosys`：默认 `compare` → `WARN`，rc=0；加
+  `--fail-on-tool-mismatch` → `FAIL`，rc=1；`all --fail-on-regression`
+  仍 rc=0（WARN 不误伤），`all --fail-on-tool-mismatch` rc=1。
+- ③ 同版本 `compare` → `RESULT: PASS`，无告警，rc=0；旧快照缺 `tools`
+  → 「不可判定」，rc=0。
+- ④ 新 `synth` 快照含 `tools.iverilog/yosys/slang/verible/python`。
+- ⑤ 三模块 `all` 回归均 rc=0：`pwm_gen`（sim 1666/0、synth 109/8/11）、
+  `sync_fifo`（1050/0、97/39/6）、`rr_arbiter`（534/0、30/2/10）。
+
 ## [v1.1.7] - 2026-10-23
 
 ### Added

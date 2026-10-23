@@ -180,9 +180,13 @@ PPA 是 Yosys generic 映射后的相对值，用于回归对比，不等同于�
 }
 ```
 
-每次 `synth`/`all` 会在 `report/history/<top>/` 追加快照，不覆盖旧快照。
+每次 `synth`/`all` 会在 `report/history/<top>/` 追加快照，不覆盖旧快照；快照顶层
+记录 `tools`（iverilog/yosys/slang/verible/python）。
 `compare` 默认对比最近两次；也可 `--baseline <文件|时间戳|目录>` 指定更早的基线。
-出现阶段回归或超预算时退出码为 1。
+出现阶段回归或超预算时退出码为 1。两边 Yosys 版本不一致时默认只告警
+（`RESULT: WARN`，退出码 0），加 `--fail-on-tool-mismatch` 判 FAIL；旧快照没有
+`tools` 字段时标记「不可判定」，不报错。PPA 语义与可比性详见
+[toolchain.md](references/toolchain.md)「PPA 语义与可比性」。
 
 `all` 内嵌的 Baseline vs Current 对比默认**只打印/写报告，不改变退出码**（记录
 实验基线时不应因有意的 PPA 变化而失败）。CI 或交付门禁需要让回归卡住整体结论时，
