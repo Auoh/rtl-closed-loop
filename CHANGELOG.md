@@ -2,6 +2,30 @@
 
 rtl-closed-loop 技能的版本变更记录。版本号遵循语义化版本（SemVer）。
 
+## [v1.1.9] - 2026-10-23
+
+### Fixed
+
+- **D37（P3，文案）** 工具版本不一致提示与门禁结果矛盾：`compare` / `all` /
+  `synth` 无条件打印“[WARN] … 默认 WARN”，即使已经加 `--fail-on-tool-mismatch`
+  并返回 FAIL/rc1。现在：
+  - 新增 `_tool_notice`：默认模式打印 `[WARN]`，启用
+    `--fail-on-tool-mismatch` 时打印 `[FAIL]`，三个命令统一。
+  - `synth` 工具门禁触发时追加 `RESULT: FAIL (tool_version)`，不再出现
+    只有 `[PASS] synth` 而退出码为 1 的歧义。
+  - `summary_<top>.md` 的不可比说明按是否已判 FAIL 选择文案
+    （“已按 --fail-on-tool-mismatch 判 FAIL” / “默认仅 WARN”）。
+- 仅修正提示文案与 `synth` 的 RESULT 行，判定逻辑、退出码与预算门禁不变。
+
+### Acceptance
+
+- `compare` 篡改版本：默认 `[WARN]` + `WARN` rc0；加 flag `[FAIL]` + `FAIL` rc1。
+- `all` 篡改版本：默认 `[WARN]` + `PASS` rc0；加 flag `[FAIL]` + `FAIL` rc1；
+  同版本/旧快照无提示。
+- `synth` 篡改版本：默认 `[WARN]` rc0；加 flag 打印 `[PASS] synth`、
+  `[FAIL]`、`RESULT: FAIL (tool_version)`，rc1。
+- 三模块 `all` 回归 rc0（pwm_gen 1666/0、sync_fifo 1050/0、rr_arbiter 534/0）。
+
 ## [v1.1.8] - 2026-10-23
 
 ### Added
