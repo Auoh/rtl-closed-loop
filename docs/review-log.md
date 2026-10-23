@@ -19,12 +19,12 @@ lint、PPA 预算、LEC、formal、快照对比、优化迭代、交付、文档
 
 | 项目 | 状态 |
 |---|---|
-| streak | 2 / 3 |
+| streak | 3 / 3（待 D25 修复后判定验收通过） |
 | demo 1 `uart_tx`（v1.1.1） | FAIL（A7、A12；其余 10 项通过） |
 | demo 1 `uart_tx`（v1.1.2 重跑） | FAIL（仅 A12；A1-A11 全过，空 blacklist 下 LEC 21/0） |
 | demo 1 `uart_tx`（v1.1.3 重跑） | **PASS**（A1-A12 全过；streak 1/3） |
 | demo 2 `rr_arbiter`（v1.1.4） | **PASS**（A1-A12 全过；streak 2/3） |
-| demo 3 `pwm_gen` | 未开始 |
+| demo 3 `pwm_gen`（v1.1.5） | **PASS**（A1-A12 全过；streak 3/3） |
 
 demo 1 关键数据（v1.1.2 重跑）：sim `checks=4000 errors=0`；`--bug` rc=1（errors=1440）；
 PPA 优化 73/19/6 → 70/18/6；LEC `blacklist=[]`、proven=21；compare rc 0。
@@ -46,6 +46,15 @@ LEC `blacklist=[]` proven=11 unproven=0；formal `DONE (PASS)`、`engines=["abc 
 compare rc=0（三项改善）。评审额外核验：TB 捕获多路同时授权（235 errors）；
 把 `prio_mask` 固定为全 1（退化为固定优先级）后 formal rc=1（frame 13）；
 `docs/rr_arbiter_baseline.v` 独立综合复现 54/3/12。gap_log 无阻塞项，A12 通过。
+
+demo 3 关键数据（v1.1.5，评审独立复跑）：`all` rc=0；lint style=0 / slang 0 告警；
+sim `checks=1666 errors=0`；`--bug` rc=1（27 errors，定向 B2/B6/B7/B8 捕获 duty 差一）；
+PPA 117/8/11 → 109/8/11（预算 200/50/25，compare rc=0，cells 改善）；
+LEC `blacklist=[]` proven=9 unproven=0；formal `DONE (PASS)`、`engines=["abc pdr"]`。
+评审额外核验：把 `cnt <= duty` 改为 `<` 后 formal rc=1 `DONE (FAIL)`（非空证明）；
+用 `gen_tb.py` 重新生成 TB 仅空白差异，参考模型不例化 DUT、`REF_DECLS` 已 `initial`；
+基线快照（10:04）先于优化快照（10:08），`optimization_iteration.md` 记录四种变体与退出码。
+gap_log 10 项无阻塞（A12 通过），其中 G2 经评审独立复现升级为 D25（P2），G3 判定为误报。
 
 ## 已修复
 
@@ -131,6 +140,29 @@ D8-D14 复验证据（v1.1.3，我的独立复现）：
   （534/0，negative PASS，30/2/10，LEC 11/0，formal PASS）；`uart_tx` rc=0
   （4000/0，63/18/5，LEC 21/0，formal PASS）。`py_compile` 通过。
 
+## 待修复（v1.1.5 demo 3 发现，2026-10-23）
+
+| ID | 级别 | 位置 | 问题 | 期望修复 |
+|---|---|---|---|---|
+| D25 | P2 | `scripts/rtlq.py:1316-1318,184-214` | formal 超时只杀 sby 子进程，残留 `yosys-abc.exe` 持有 `report/formal/<top>`；下一次 `formal`/`all` 在 `shutil.rmtree` 抛未捕获 `PermissionError`（WinError 32） | 超时杀整个进程树；`rmtree` 捕获 `PermissionError` 并给出残留 PID/清理提示；文档注明 |
+| D26 | P3 | `references/examples/formal/README.md` | 无数值/计数型不变式的证明策略（G1）；abc pdr 对一般累加不变式不可解 | 补“逐拍参考等式 + 代表性常量计数”策略与 pdr 局限说明 |
+| D27 | P3 | `references/examples/formal/README.md` | 无“保持配置输入恒定”的 formal 写法（G4） | 补 reset 窗口捕获 + `assume` 保持模式 |
+| D28 | P3 | `references/workflow.md:18-30`、`scripts/gen_tb.py` | 未说明 `reference_model` 必须每检查周期调用一次（G5） | 补充说明与失败症状 |
+| D29 | P3 | `scripts/gen_tb.py:41-45,108-113` | 生成端口声明缩进不一致（G6，纯观感） | 统一缩进 |
+| D30 | P3 | `SKILL.md:60`、`scripts/rtlq.py:1366,1709` | `all` 的 negative 阶段仅在顶层 RTL 含 `INJECT_BUG` 时运行，未文档化（G7） | 文档写明触发条件与 SKIP 原因 |
+| D31 | P3 | `references/toolchain.md:59-61` | prove + abc pdr 下 `depth` 不是帧上界（G8） | 说明 `depth` 仅约束 bmc |
+| D32 | P3 | `references/examples/formal/README.md:55-57`、`scripts/rtlq.py:1678` | 变异证据无受支持的归档位置（G9） | 约定 `report/mutation/` 并由文档引用 |
+| D33 | P3 | `references/workflow.md:56,71-73` | 无 baseline RTL vs 优化后 RTL 的等价性流程（G10） | 补 `equiv_make/async2sync/equiv_induct` 可复制命令或脚本 |
+
+D25 复现证据（评审独立复现）：副本工作区把 `formal.timeout_s` 设为 5 →
+`rtlq.py formal` 5 s 超时；`Get-CimInstance Win32_Process -Filter "name='yosys-abc.exe'"`
+显示残留进程持有 `report/formal/pwm_gen`；再次 `rtlq.py formal` → rc=1，
+`PermissionError: [WinError 32]` traceback；残留进程退出后 `rmtree` 恢复正常。
+
+误报排除（run3 gap）：G3「多任务 sby 被误判 PASS」——sby 在 rtlq 传 `-d` 时直接拒绝
+多任务（`Exactly one task is required when workdir is specified`），rtlq 返回 FAIL，
+误判路径不可达。
+
 ### D15-D20（v1.1.4 已修复，证据）
 
 ### D15-D20 原始问题（v1.1.3 重跑发现，已修复）
@@ -191,4 +223,5 @@ rtlq.py sim -W <workspace> --top uart_tx     # 不设 RTL_TOOLCHAIN
 - `v1.1.4`（`bfe9c45`）：D15-D20 修复（LEC 默认 blacklist、TB 定向区、Python 探测、协议级 formal 模板），已推送。
 - `pre-fix-20261023-0928-D21`（`9a787a5`）：D21-D24 修复前备份，已推送。
 - `v1.1.5`（`26e4f6d`）：D21-D24 修复（F2 保持分支文档、`$fatal` 格式、`*_cap` 适用性、wave 产物命名），已推送。
+- `pre-fix-20261023-1018-D25`（`bc6328f`）：D25-D33 修复前备份（代码同 v1.1.5），已推送。
 - 流程：确认问题点后先把当前状态打 tag 并 push，再执行修改；修复复验通过后打版本 tag 并 push。
