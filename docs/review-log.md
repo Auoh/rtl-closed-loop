@@ -461,3 +461,16 @@ rtlq.py synth ... --fail-on-tool-mismatch
 
 **版本**：`v1.1.8`（annotated `51d524e`）指向 `2d0fe2a`，已推送；remote main
 `2d0fe2a`。
+
+### D37 独立复验（2026-10-23 23:20，通过，v1.1.9）
+
+`git archive 2782941` 只读副本复验：
+- `compare` 篡改版本：默认 `[WARN]` + `RESULT: WARN` rc0；`--fail-on-tool-mismatch`
+  `[FAIL]` + `RESULT: FAIL (regressions: tool_version)` rc1。
+- 同版本 `RESULT: PASS` rc0；旧快照无 tools 无提示、rc0。
+- `all`：默认 `[WARN]` + PASS rc0；严格 `[FAIL]` + `== rtlq all: FAIL ==` rc1。
+- `synth`：默认 `[WARN]` rc0；严格 `[FAIL]` + `RESULT: FAIL (tool_version)` rc1，
+  不再有 `[PASS]` 与 rc1 并存的歧义。
+- 回归：sync_fifo 1050/0、97/39/6、51/0；rr_arbiter 534/0、30/2/10、11/0；全 rc0。
+
+**版本**：`v1.1.9`（annotated `fcbfdeb`）指向 `2782941`，已推送。
