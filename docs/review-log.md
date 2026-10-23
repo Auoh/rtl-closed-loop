@@ -23,7 +23,7 @@ lint、PPA 预算、LEC、formal、快照对比、优化迭代、交付、文档
 | demo 1 `uart_tx`（v1.1.1） | FAIL（A7、A12；其余 10 项通过） |
 | demo 1 `uart_tx`（v1.1.2 重跑） | FAIL（仅 A12；A1-A11 全过，空 blacklist 下 LEC 21/0） |
 | demo 1 `uart_tx`（v1.1.3 重跑） | **PASS**（A1-A12 全过；streak 1/3） |
-| demo 2 `rr_arbiter` | 未开始 |
+| demo 2 `rr_arbiter`（v1.1.4） | **PASS**（A1-A12 全过；streak 2/3） |
 | demo 3 `pwm_gen` | 未开始 |
 
 demo 1 关键数据（v1.1.2 重跑）：sim `checks=4000 errors=0`；`--bug` rc=1（errors=1440）；
@@ -39,6 +39,13 @@ formal `DONE (PASS)`、`engines=["abc pdr"]`；compare rc=0（70/18/8 → 63/18/
 用 `docs/uart_tx_baseline.v` 独立综合复现基线 70/18/8。
 **A12 通过**：`gap_log.md` 无阻塞级缺口；其中 G5「R7 与 §13 冲突」经复核为误报
 （`coding_style.md:192-194` 已明确 §13 优先）。
+
+demo 2 关键数据（v1.1.4，评审独立复跑）：`all` rc=0；sim `checks=534 errors=0`；
+`--bug` rc=1（151 errors）；PPA 54/3/12 → 30/2/10（预算 120/8/15）；
+LEC `blacklist=[]` proven=11 unproven=0；formal `DONE (PASS)`、`engines=["abc pdr"]`；
+compare rc=0（三项改善）。评审额外核验：TB 捕获多路同时授权（235 errors）；
+把 `prio_mask` 固定为全 1（退化为固定优先级）后 formal rc=1（frame 13）；
+`docs/rr_arbiter_baseline.v` 独立综合复现 54/3/12。gap_log 无阻塞项，A12 通过。
 
 ## 已修复
 
@@ -83,9 +90,21 @@ D8-D14 复验证据（v1.1.3，我的独立复现）：
 - D12：`reg_adder` 临时副本加 1 位 keep 寄存器（48 cells/10 ff，预算内）：默认 `all` rc 0 但内嵌基线显示 `FAIL (cells, ff)`；加 `--fail-on-regression` → rc 1、`quality.json status=FAIL`。
 - D9/D11/D13：`coding_style.md` 已无「沿后 #1」；`toolchain.md:57/68` 与 README 写明无 `yosys-witness`、`[files]` 相对 `-W` 工作区。
 
-## 待修复
+## 待修复（v1.1.4 demo 2 发现，2026-10-23）
 
-无。D15-D20 已在 v1.1.4 修复，复验证据如下。
+| ID | 级别 | 位置 | 问题 | 期望修复 |
+|---|---|---|---|---|
+| D21 | P2 | `references/coding_style.md:162-163` | §13 正文要求保持分支写 `state_next = state;`，但反馈赋值正是 `opt_dff` 识别 DFFE 的形态；同节示例写的却是状态常量。实测按正文写法（if/else + `state_next = state`）→ 2 个 `state_next` unproven；改成每分支常量 → 11/0 | 正文改为「保持分支写该状态的常量（如 `state_next = ST_IDLE;`），不要写 `state_next = state;`」，并说明反馈赋值仍会生成 `$adffe`；示例与正文统一 |
+| D22 | P3 | `scripts/gen_tb.py:254` | 生成 `$fatal(1, "TEST FAILED: %%0d ...")`，Icarus 原样打印 `%0d`。FAIL/rc 判定不受影响 | 模板改为 `%0d`（生成文件里应为单 `%`） |
+| D23 | P3 | `scripts/gen_tb.py:98,241` | 注释统一要求参考模型用 `*_cap`；该约定只适用于寄存器输出。组合输出在 negedge 已对应新输入，用 `*_cap` 会落后一拍 | 注释区分：寄存器输出用 `*_cap`，组合输出用当前输入 |
+| D24 | P3 | `scripts/rtlq.py:877,899-900` | `sim --wave` 与普通 sim 复用同一 vvp 与 `sim_<top>.log`，后跑覆盖前跑日志 | wave 的 vvp/日志加 `_wave` 后缀，或文档说明会覆盖 |
+
+复现证据（D21，评审独立复现）：`rr_arbiter` 同一状态机：
+- if/else + `else state_next = state;` → rc=1，proven=9 unproven=2（`unproven_signals=["state_next"]`）；
+- 同一 if/else 结构改每分支常量（`= ST_P0/1/2`）→ rc=0，proven=11 unproven=0；
+- 交付版 `case(state)` + 常量 → rc=0，11/0。
+
+### D15-D20（v1.1.4 已修复，证据）
 
 ### D15-D20 原始问题（v1.1.3 重跑发现，已修复）
 
