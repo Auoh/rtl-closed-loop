@@ -35,6 +35,12 @@
    testplan 的“结果”列。negative 注入点至少覆盖一个关键验收点。
 
 ## 3. 测试环境
+- **硬性检查：TB 的每一处输出比较必须用 `!==`（或 `===`），禁止用 `!=`。**
+  `!=` 遇 X/Z 得 X，`if (X)` 按假处理，全 X 的 DUT 也会静默 PASS；
+  检查必须在负沿做，寄存器输出用 `*_cap`、组合输出用当前输入
+  （实测矩阵与“保证/不保证”见 `toolchain.md`「比对与时序：保证与不保证」）。
+  `rtlq` 只认 `RESULT` 字面量与退出码，不能证明 TB 真的在比较；negative 注入是
+  唯一自动发现“TB 失效”的手段。
 - 接口 JSON → `gen_tb.py` 生成骨架（示例：技能 `references\examples\iface_reg_adder.json`）
 - 重新生成只保留 `reference_model` 任务内部逻辑、`REF_DECLS_BEGIN/END` 声明和
   `DIRECTED_BEGIN/END` 定向激励区；其他手工代码会被覆盖。跨拍状态请在 `REF_DECLS`

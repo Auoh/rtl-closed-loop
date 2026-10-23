@@ -90,6 +90,8 @@ description: >-
 
 ## 硬性约束
 - 退出码即结论：0=PASS，非0=FAIL；TB 报 FAIL 或 `rtlq all` 非 PASS 时禁止宣称通过
+- TB 每一处输出比较必须用 `!==`/`===`；`!=` 遇 X/Z 得 X，`if (X)` 按假处理会静默漏报。
+  检查在负沿做，寄存器输出用 `*_cap`、组合输出用当前输入（见 toolchain.md「比对与时序：保证与不保证」）
 - 每轮 RTL 改动后必须重跑完整回归与质量门禁（至少 sim + lint + synth + lec）
 - RTL 编写/审查必须遵守编码规范 [coding_style.md](references/coding_style.md)；外部 RTL 必须先生成规范报告（`format.ps1 -Report`，归档 `docs\coding_report_<module>.md`）并按其建议修复；新增规范要求时同步刷新该文档
 - 质量策略（超时/开关/blacklist）放 `config\quality_policy.json`，PPA 预算放 `config\ppa_budget.json`；预算调整必须在交付说明中记录理由
