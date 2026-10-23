@@ -542,3 +542,18 @@ equiv_opt -multiclock -assert synth`。
 - 结论：A1-A15 全部通过；第 1 轮通过，待第 2 轮独立复跑后验收。
 
 **版本**：`v1.1.10`（annotated `0708037`）指向 `b86fc07`，已推送。
+
+## run4 spi_master 验收第 2 轮：通过（2026-10-24）
+
+- 技能快照：`git archive v1.1.10`（b86fc07）；交付副本：`run4/` → `audit-run4-2/dut`。
+- 交付 RTL 逐文件 sha256 与第 1 轮一致（spi_master b384956d、spi_fifo af39d4f4、
+  spi_shift 4c17f561），无变更。
+- 独立副本 `rtlq.py all` rc0：lint 0/0；sim 680/0（mon 12171/0）；negative FAIL
+  as expected；synth 1339/381/19；LEC 502/0；formal DONE PASS。各数字与第 1 轮 delta=0。
+- 独立 TB + VCD 解析：**224/224 PASS**；关键测量与第 1 轮一致（DIV=4 半周期
+  40000ps、setup 80000ps；DIV=255 半周期 2550000ps、setup/hold 5100000ps；
+  背靠背 CS 高 10000ps；溢出排空 0x80..0x8f；异步复位首拍无 X/Z）。
+- 负向：`sim --bug` → `RESULT: FAIL` rc1。
+- 结论：**连续 2 轮 A1-A15 全通过，spi_master 交付验收通过（v1.1.10）**。
+  交付未发现缺陷；唯一非阻塞观察为 testplan R14 行未转义 `|`（P3 排版）。
+- 证据：`D:/tmp/rtl-acceptance/audit-run4-1/evidence`、`audit-run4-2/evidence`。
