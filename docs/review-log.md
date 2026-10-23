@@ -500,9 +500,11 @@ equiv_opt -multiclock -assert synth`。
   lint `style=0 slang_warn=0`；sim `checks=680 errors=0 mon_checks=12171
   mon_errors=0`；negative `expected=FAIL actual=FAIL`；synth
   `cells=1339 ff=381 depth=19`；formal `DONE (PASS, rc=0)`。
-- 形式非空洞：6 个变异（reset_cs_low、fifo_count_step2、cs_never_asserted、
-  fifo_full_at_8、irq_ignores_enable、tx_done_early）均产生反例，
-  证据见 `run4/report/mutation/spi_master/mutant_notes.md`。
+- 形式非空洞：8 个变异（reset_cs_low、fifo_count_step2、cs_never_asserted、
+  fifo_full_at_8、irq_ignores_enable、tx_done_early、idle_tx_ready_high、
+  div_clamp_removed）均产生反例，覆盖 P_RESET/P_IDLE/P_CS/P_BUSY/P_FIFO/
+  P_IRQ/P_CFG/P_DONE 全部属性组，证据见
+  `run4/report/mutation/spi_master/mutant_notes.md`。
 - 单模块回归：`d34-fifo` 副本 `sync_fifo`，`proven=51 unproven=0`，LEC PASS。
 
 **版本**：`v1.1.10`（本提交）。按当前约定未由实现方 push/tag；由 peer 独立

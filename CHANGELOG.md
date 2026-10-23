@@ -22,7 +22,7 @@ rtl-closed-loop 技能的版本变更记录。版本号遵循语义化版本（S
 - 同一工作区 `rtlq.py all --top spi_master`：六阶段 PASS、rc0；
   sim `checks=680 errors=0 mon_checks=12171 mon_errors=0`；
   negative `expected=FAIL actual=FAIL`；synth `cells=1339 ff=381 depth=19`；
-  formal `DONE (PASS, rc=0)`；6 个 formal 变异全部被捕获。
+  formal `DONE (PASS, rc=0)`；8 个 formal 变异全部被捕获，覆盖全部 8 个属性组。
 - 单模块回归：`sync_fifo`（副本）`proven=51 unproven=0`，LEC PASS。
 
 ## [v1.1.9] - 2026-10-23
