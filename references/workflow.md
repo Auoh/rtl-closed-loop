@@ -13,6 +13,27 @@
 - 可综合风格、参数化、复位完整、无意外 latch、位宽对齐
 - 文件命名：`rtl\<module>.v`，模块名与 TB 顶层一致
 
+## 2.5 测试点分解与完备性评审（写 TB 之前）
+
+因果顺序固定为：**规格条目 → 测试点 → 完备性检查 → 用例设计 → 执行**。
+不允许从需求直接跳到写 TB，否则覆盖是否完整只能靠临场判断。
+
+1. 从 §1 的每条需求、每个边界与非法配置抽出测试点，编号
+   `TP<需求号>.<序号>`，写入 `docs/testplan_<module>.md`
+   （模板：`references/templates/testplan.md`）。
+2. 每个测试点必须标注：类别（功能 / 边界 / 异常与非法配置 / 复位 /
+   接口时序 / 性能约束）、完备性判据、预期载体（`DIRECTED` 段、随机段、
+   `INJECT_BUG` 注入点、formal 属性名）。
+3. 最低完备性要求：
+   - 每条需求 ≥1 个测试点；每个测试点 ≥1 个用例或断言；
+   - 边界条件与非法/异常配置逐条显式，不得用“随机覆盖”代替；
+   - 复位行为与接口时序各自单独成点；
+   - 性能约束必须有可判定判据，不适用时写“不适用 + 理由”。
+4. 完备性评审：无孤儿需求、无无主测试点、每个载体可定位；评审通过后才进入
+   §3 写 TB。
+5. 需求变更时先改规格与 testplan，再改 RTL/TB；回归后把实际结果回填
+   testplan 的“结果”列。negative 注入点至少覆盖一个关键验收点。
+
 ## 3. 测试环境
 - 接口 JSON → `gen_tb.py` 生成骨架（示例：技能 `references\examples\iface_reg_adder.json`）
 - 重新生成只保留 `reference_model` 任务内部逻辑、`REF_DECLS_BEGIN/END` 声明和
@@ -135,6 +156,7 @@ equiv_status -assert
 
 ## 9. 交付清单
 - `docs\<module>_spec.md`（需求规格）
+- `docs\testplan_<module>.md`（测试计划与需求追溯矩阵，含结果回填）
 - `rtl\<module>.v`（RTL）
 - `tb\tb_<module>.v`（自检 TB）
 - `formal\<module>.sby` + `formal\<module>_fv.sv`（形式验证，适用时）
@@ -142,4 +164,5 @@ equiv_status -assert
 - `report\summary.md` + `report\quality.json`（质量报告）
 - `report\logs\sim_<module>.log`（仿真运行日志；编译日志为
   `report\logs\sim_compile_<module>.log`）
-- 结论摘要：PASS/FAIL、覆盖点、PPA（cells/FF/depth）、遗留风险
+- 结论摘要：PASS/FAIL、覆盖点（引用 testplan 追溯矩阵的测试点与结果）、
+  PPA（cells/FF/depth）、遗留风险

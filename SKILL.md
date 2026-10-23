@@ -54,15 +54,19 @@ description: >-
 ## 闭环工作流（每次完整走一遍）
 1. **规格化**：把需求整理为可执行验收标准（接口表、边界行为、PASS/FAIL 判据），写入 `docs\`
 2. **RTL**：编写或审查 `rtl\<module>.v`；外部提供的 RTL 先跑 `format.ps1 -Report` 生成规范报告并修复违例，再进入测试环境环节
-3. **测试环境**：写接口 JSON → 技能 `gen_tb.py -w <工作区>` 生成骨架 → 在 `reference_model` 填写期望逻辑
+3. **测试点分解**：按 `references\templates\testplan.md` 写 `docs\testplan_<module>.md`，
+   完成“需求 → 测试点 → 用例/断言”追溯；每条需求 ≥1 个测试点、每个测试点 ≥1 个载体，
+   边界与非法配置逐条显式，复位与接口时序单独成点。评审通过（无孤儿需求、无无主测试点）
+   后才允许写 TB
+4. **测试环境**：写接口 JSON → 技能 `gen_tb.py -w <工作区>` 生成骨架 → 在 `reference_model` 填写期望逻辑
    （参考模型必须独立于 DUT，禁止用被测逻辑验证被测逻辑）
-4. **回归**：技能 `rtlq.py sim -W <工作区> --top <module>`（或 `run.ps1 -Top`）必须 `RESULT: PASS` 且退出码 0
-5. **负向演练**：`rtlq.py sim --bug` 对关键验收点做错误注入，期望 FAIL 且 `rtlq.py all` 的 negative 阶段为 PASS。
+5. **回归**：技能 `rtlq.py sim -W <工作区> --top <module>`（或 `run.ps1 -Top`）必须 `RESULT: PASS` 且退出码 0
+6. **负向演练**：`rtlq.py sim --bug` 对关键验收点做错误注入，期望 FAIL 且 `rtlq.py all` 的 negative 阶段为 PASS。
    `all` 只在顶层 RTL（文件名 stem 等于 `--top`）文本含 `INJECT_BUG` 时自动运行
    negative；RTL 没写该分支时该阶段记 SKIP 并注明原因（不是失败），此时需手工
    完成 `sim --bug` 演练或在 RTL 中补注入分支
-6. **波形确认**：技能 `wave.ps1 -W <工作区>` 打开 GTKWave 核对关键时序（实时加信号方法见 toolchain.md）
-7. **质量门禁**：`rtlq.py all -W <工作区> --top <module>`，逐项确认
+7. **波形确认**：技能 `wave.ps1 -W <工作区>` 打开 GTKWave 核对关键时序（实时加信号方法见 toolchain.md）
+8. **质量门禁**：`rtlq.py all -W <工作区> --top <module>`，逐项确认
    - lint：style 0 违例、slang 无 error/warning、Yosys 无 latch/组合环
    - synth：generic cell / FF / 逻辑深度不超过 `config\ppa_budget.json` 预算
    - lec：Yosys 等价性证明 unproven=0
@@ -73,14 +77,16 @@ description: >-
      多拍 `assume(rst_n == 0)` 清除 anyinit，断言用 `boot >= RESET_CYCLES` 门控；
      `[files]` 路径相对 `-W` 工作区，不是相对 `.sby` 目录。
    - PPA 指标是 Yosys generic 映射后的相对量，用于回归对比，不等同于签核 STA
-8. **优化（记录→改动→复测→对比）**：
+9. **优化（记录→改动→复测→对比）**：
    a. 改动前先跑 `rtlq.py all` 记录基线快照（或明确用 `--baseline <文件>` 指定更早基线）；
-   b. 修改 RTL，重跑 4-7（`all` 会生成新快照）；
+   b. 修改 RTL，重跑 5-8（`all` 会生成新快照）；
    c. 跑 `rtlq.py compare -W <工作区> --top <module>`，确认六阶段状态无回归、
       cells/FF/depth 未超预算；退出码非 0 必须回退或修复；
    d. 在 `docs\optimization_iteration.md` 记录优化理由、前后数据与命令退出码；
    注意 `synth`/`all` 的基线在写当前快照**之前**解析，旧基线不会被覆盖。
-9. **交付**：需求文档 + RTL + TB + 仿真/质量日志 + `report\summary.md` + 基线对比结论（PASS/FAIL、覆盖点、PPA、遗留风险）
+10. **交付**：需求文档 + 测试计划（`docs\testplan_<module>.md`，含追溯矩阵与结果）
+    + RTL + TB + 仿真/质量日志 + `report\summary.md` + 基线对比结论
+    （PASS/FAIL、测试点覆盖结论、PPA、遗留风险）
 
 ## 硬性约束
 - 退出码即结论：0=PASS，非0=FAIL；TB 报 FAIL 或 `rtlq all` 非 PASS 时禁止宣称通过

@@ -140,14 +140,16 @@ Windows 用 `scripts\rtlq.ps1`，Linux/macOS 用 `scripts/rtlq`；也可直接 `
 
 1. 规格化（docs）
 2. RTL 编写/审查（外部 RTL 先 `format.ps1 -Report`）
-3. 测试台：`gen_tb.py` 生成 → 填独立参考模型
-4. 回归：`sim` 必须 PASS
-5. 负向演练：`--bug` 必须 FAIL，且 `all` 的 negative 阶段 PASS
+3. 测试点分解：`docs/testplan_<module>.md` 追溯矩阵，评审通过后才写 TB
+   （模板见 `references/templates/testplan.md`）
+4. 测试台：`gen_tb.py` 生成 → 填独立参考模型
+5. 回归：`sim` 必须 PASS
+6. 负向演练：`--bug` 必须 FAIL，且 `all` 的 negative 阶段 PASS
    （`all` 仅在顶层 RTL 文本含 `INJECT_BUG` 时自动执行；否则该阶段 SKIP 并注明原因）
-6. 波形确认（可选但建议）
-7. 质量门禁：`all` 六阶段全 PASS
-8. 优化迭代：**记录基线 → 改动 → 重测 → compare → 记录文档**
-9. 交付：spec + RTL + TB + 日志 + summary + 结论
+7. 波形确认（可选但建议）
+8. 质量门禁：`all` 六阶段全 PASS
+9. 优化迭代：**记录基线 → 改动 → 重测 → compare → 记录文档**
+10. 交付：spec + testplan + RTL + TB + 日志 + summary + 结论
 
 退出码就是结论：`0=PASS`，非 0 不允许宣称通过。
 
