@@ -28,6 +28,7 @@ import os
 import re
 import shlex
 import shutil
+import signal
 import subprocess
 import sys
 import time
@@ -35,7 +36,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
-VERSION = "1.1.5"
+VERSION = "1.1.6"
 SKILL_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_POLICY: Dict[str, Any] = {
     "lint": {
@@ -172,6 +173,35 @@ class RunResult:
         return "\n".join(lines[-n:])
 
 
+def _kill_process_tree(proc: "subprocess.Popen[str]") -> str:
+    """Kill a child process and all of its descendants.
+
+    Tools such as sby spawn yosys/abc grandchildren.  Killing only the direct
+    child on timeout leaves those processes holding report/formal/<top>, so the
+    next run fails in shutil.rmtree with WinError 32.
+    """
+    if os.name == "nt":
+        try:
+            r = subprocess.run(["taskkill", "/T", "/F", "/PID", str(proc.pid)],
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                               timeout=15)
+            if r.returncode == 0:
+                return "taskkill /T /F /PID %d" % proc.pid
+        except Exception:
+            pass
+    else:
+        try:
+            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+            return "killpg(%d, SIGKILL)" % proc.pid
+        except Exception:
+            pass
+    try:
+        proc.kill()
+        return "Popen.kill(%d)" % proc.pid
+    except Exception:
+        return "kill failed (pid=%d)" % proc.pid
+
+
 def _run(cmd: Sequence[Any], cwd: Path, timeout: Optional[float],
          log: Optional[Path] = None, extra_env: Optional[Dict[str, str]] = None) -> RunResult:
     cmd_s = [str(c) for c in cmd]
@@ -184,26 +214,46 @@ def _run(cmd: Sequence[Any], cwd: Path, timeout: Optional[float],
     timed_out = False
     out = ""
     rc = 1
+    popen_kw: Dict[str, Any] = {}
+    if os.name == "nt":
+        popen_kw["creationflags"] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+    else:
+        popen_kw["start_new_session"] = True
+    proc: Optional["subprocess.Popen[str]"] = None
     try:
-        proc = subprocess.run(
+        proc = subprocess.Popen(
             cmd_s, cwd=str(cwd), env=env,
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-            timeout=timeout, text=True, encoding="utf-8", errors="replace",
+            text=True, encoding="utf-8", errors="replace", **popen_kw,
         )
-        rc = int(proc.returncode)
-        out = proc.stdout or ""
-    except subprocess.TimeoutExpired as exc:
-        timed_out = True
-        rc = 124
-        raw = exc.stdout or ""
-        out = raw.decode("utf-8", "replace") if isinstance(raw, bytes) else str(raw)
-        out += "\n[rtlq] TIMEOUT after %s s\n" % timeout
+        try:
+            out, _ = proc.communicate(timeout=timeout)
+            rc = int(proc.returncode)
+        except subprocess.TimeoutExpired:
+            timed_out = True
+            rc = 124
+            how = _kill_process_tree(proc)
+            try:
+                out, _ = proc.communicate(timeout=10)
+            except subprocess.TimeoutExpired:
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+                try:
+                    out, _ = proc.communicate(timeout=5)
+                except Exception:
+                    out = ""
+            out = out or ""
+            out += "\n[rtlq] TIMEOUT after %s s; killed process tree: %s\n" % (timeout, how)
     except FileNotFoundError as exc:
         rc = 127
         out = "[rtlq] command not found: %s\n%s\n" % (cmd_s[0], exc)
     except Exception as exc:  # noqa: BLE001 - report tool failures, don't crash
         rc = 1
         out = "[rtlq] execution error: %s\n" % exc
+        if proc is not None and proc.poll() is None:
+            _kill_process_tree(proc)
     seconds = time.time() - t0
     if log is not None:
         try:
@@ -1286,6 +1336,45 @@ def _find_yosys_smtbmc(ctx: Context) -> Optional[Path]:
     return Path(w) if w else None
 
 
+def _leftover_abc_pids() -> List[int]:
+    """Best-effort list of yosys-abc.exe PIDs (Windows only, stdlib only)."""
+    if os.name != "nt":
+        return []
+    try:
+        r = subprocess.run(
+            ["tasklist", "/FI", "IMAGENAME eq yosys-abc.exe",
+             "/FO", "CSV", "/NH"],
+            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+            text=True, encoding="utf-8", errors="replace", timeout=10)
+    except Exception:
+        return []
+    pids: List[int] = []
+    for line in (r.stdout or "").splitlines():
+        parts = [p.strip().strip('"') for p in line.strip().split('","')]
+        if len(parts) >= 2 and parts[0].lower() == "yosys-abc.exe":
+            try:
+                pids.append(int(parts[1]))
+            except ValueError:
+                pass
+    return pids
+
+
+def _rmtree_with_retry(path: Path, attempts: int = 5,
+                       delay: float = 0.3) -> Optional[OSError]:
+    """Remove a tree, tolerating short-lived Windows handle release delays."""
+    for i in range(attempts):
+        try:
+            shutil.rmtree(path)
+            return None
+        except FileNotFoundError:
+            return None
+        except OSError as exc:
+            if i == attempts - 1:
+                return exc
+            time.sleep(delay)
+    return None
+
+
 def do_formal(ctx: Context, args: argparse.Namespace) -> Dict[str, Any]:
     top = ctx.infer_top(required=True)
     sby_file = Path(getattr(args, "sby", "") or (ctx.ws / "formal" / (top + ".sby")))
@@ -1315,7 +1404,24 @@ def do_formal(ctx: Context, args: argparse.Namespace) -> Dict[str, Any]:
         }
     work = ctx.report_dir / "formal" / top
     if work.exists():
-        shutil.rmtree(work)
+        rm_err = _rmtree_with_retry(work)
+        if rm_err is not None:
+            pids = _leftover_abc_pids()
+            hint = ("关闭占用 %s 的进程后重试。常见原因是上次 formal 超时残留的 "
+                    "yosys-abc.exe 孙进程" % work)
+            if pids:
+                hint += ("；当前检测到 yosys-abc.exe PID: %s，可执行 "
+                         "`taskkill /F /T /PID <pid>` 清理" %
+                         ", ".join(str(p) for p in pids))
+            hint += "。清理后重跑 rtlq.py formal。"
+            return {
+                "command": "formal", "status": "ERROR", "top": top,
+                "sby": str(sby_file), "engines": engines,
+                "workdir": str(work),
+                "reason": "无法清理上一次的形式验证目录（%s: %s）" %
+                          (type(rm_err).__name__, rm_err),
+                "hint": hint,
+            }
     work.mkdir(parents=True, exist_ok=True)
     cmd: List[Any] = _sby_command(ctx) + [str(ctx.tools.sby_py)]
     if ctx.tools.yosys:
@@ -1323,7 +1429,8 @@ def do_formal(ctx: Context, args: argparse.Namespace) -> Dict[str, Any]:
     if ctx.tools.yosys_abc:
         cmd += ["--abc", str(ctx.tools.yosys_abc)]
     cmd += ["-d", str(work), str(sby_file)]
-    r = _run(cmd, ctx.ws, ctx.stage_timeout("formal"), ctx.log_path("formal_%s" % top))
+    formal_timeout = ctx.stage_timeout("formal")
+    r = _run(cmd, ctx.ws, formal_timeout, ctx.log_path("formal_%s" % top))
     text = r.out
     if "DONE (PASS" in text or "Status returned by engine: PASS" in text:
         status = "PASS"
@@ -1335,12 +1442,20 @@ def do_formal(ctx: Context, args: argparse.Namespace) -> Dict[str, Any]:
         status = "FAIL"
     else:
         status = "FAIL"
-    return {
+    result = {
         "command": "formal", "status": status, "top": top, "sby": str(sby_file),
         "engines": engines, "workdir": str(work), "rc": r.rc,
         "seconds": round(r.seconds, 3),
         "log": str(r.log) if r.log else None, "tail": r.tail(30),
     }
+    if r.timed_out:
+        result["hint"] = (
+            "formal 超时（%s s），已尝试终止 sby 及其 yosys/abc 子进程树。"
+            "若下一次仍报 report/formal/%s 被占用，用 `tasklist /FI "
+            "\"IMAGENAME eq yosys-abc.exe\"` 找到残留进程并 `taskkill /F /T "
+            "/PID <pid>`，或调大 formal.timeout_s / 缩小证明规模后重试。"
+            % (formal_timeout, top))
+    return result
 
 
 def cmd_formal(ctx: Context, args: argparse.Namespace) -> int:
@@ -1635,7 +1750,16 @@ def _comparison_md(cmp: Dict[str, Any]) -> List[str]:
     return lines
 
 
-def _summary_md(quality: Dict[str, Any]) -> str:
+def _mutation_files(ctx: Context, top: str) -> List[str]:
+    """Mutation logs live in report/mutation/<top>/ (see formal README)."""
+    d = ctx.report_dir / "mutation" / top
+    if not d.is_dir():
+        return []
+    return sorted(str(p.relative_to(ctx.ws)) for p in d.rglob("*") if p.is_file())
+
+
+def _summary_md(quality: Dict[str, Any],
+                mutation_files: Optional[Sequence[str]] = None) -> str:
     stages = quality.get("stages") or {}
     lines = ["# RTL 质量报告 — %s" % (quality.get("top") or "(unknown)"),
              "- 结论: **%s**" % quality.get("status"),
@@ -1666,6 +1790,10 @@ def _summary_md(quality: Dict[str, Any]) -> str:
         lines += ["", "## Baseline vs Current", "",
                   "- baseline: `%s`" % baseline.get("file"),
                   "- 错误: %s" % baseline.get("error")]
+    if mutation_files:
+        lines += ["", "## 变异/反例证据", ""]
+        for f in mutation_files:
+            lines.append("- `%s`" % f)
     lines += ["", "## 工具版本", ""]
     for k, v in (quality.get("tools") or {}).items():
         lines.append("- %s: `%s`" % (k, v))
@@ -1676,7 +1804,8 @@ def _summary_md(quality: Dict[str, Any]) -> str:
 
 def _render_summary(ctx: Context, quality: Dict[str, Any]) -> Path:
     p = ctx.report_dir / "summary.md"
-    _write_text(p, _summary_md(quality))
+    top = str(quality.get("top") or "")
+    _write_text(p, _summary_md(quality, _mutation_files(ctx, top)))
     return p
 
 
@@ -1758,7 +1887,8 @@ def do_all(ctx: Context, args: argparse.Namespace) -> Dict[str, Any]:
     _render_summary(ctx, quality)
     # Keep a per-top copy so running another module does not overwrite the
     # evidence for this one.
-    _write_text(ctx.report_dir / ("summary_%s.md" % top), _summary_md(quality))
+    _write_text(ctx.report_dir / ("summary_%s.md" % top),
+                _summary_md(quality, _mutation_files(ctx, top)))
     if args.json:
         print(json.dumps(quality, ensure_ascii=False, indent=2))
     return quality

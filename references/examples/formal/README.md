@@ -56,6 +56,75 @@ assert(done == (busy && (shadow == LATENCY - 1)));             // done 位置
 验证非空洞性：把 DUT 的 `cnt == LATENCY - 1` 改成 `LATENCY - 2`（提前一拍
 释放），`sby` 应返回 `FAIL`；改回后返回 `PASS`。
 
+## 数值/计数型不变式的证明策略
+
+`abc pdr` 是位级归纳引擎。对“输出频率等于 `clk / (period+1)`”“8 位累加器
+始终满足某算术关系”这类一般化的数值不变式，PDR 往往无法闭合（尤其当
+`period`/`duty` 是每拍自由的 8 位输入时，状态空间实际不可枚举）。推荐顺序：
+
+1. **优先证明逐拍参考等式**：在 wrapper 里用独立影子计数器/移位寄存器复现
+   期望行为，断言每个 `posedge` 的 `pwm_out == ref_out`（或
+   `grant == ref_grant`）。这类属性是逐拍等式，归纳友好，PDR 通常能收敛，
+   而且能抓住“自洽但错误”的实现（影子逻辑不复用 DUT 内部状态）。
+2. **计数/边界属性用代表性常量配置**：固定 `PERIOD`、`DUTY`（例如
+   `PERIOD=8`、`DUTY=1/3/7`），证明若干拍后的行为与边界；不要试图让一次
+   prove 覆盖符号化的全部 8 位配置组合。需要覆盖更多配置时，用多个 `.sby`
+   任务或多个 wrapper 实例，而不是把配置当自由输入。
+3. **短反例先用 bmc**：临时 `mode bmc` + `[engines] abc bmc3` 找最短失败帧，
+   再回到 `prove`。`abc pdr` 只允许 `prove` 模式。
+4. 若逐拍等式仍需很深的归纳，检查是否把 DUT 内部计数器直接抄进了参考逻辑；
+   影子逻辑应与 DUT 实现方式不同（例如用移位寄存器而非计数器），否则证明
+   会退化为同构比较。
+
+## 保持配置输入恒定
+
+如果 DUT 有 `period`、`duty` 这类自由配置输入，形式环境中它们每拍都可以任意
+变化，此时“固定频率/占空比”属性没有意义（DUT 每拍都可能被重新配置）。验证
+固定配置下的行为时，在复位窗口捕获配置并全程约束：
+
+```systemverilog
+reg [7:0] period_hold, duty_hold;
+always @(posedge clk) begin
+    if (boot == 0) begin
+        period_hold <= period;
+        duty_hold   <= duty;
+    end
+end
+always @(posedge clk) begin
+    if (boot >= RESET_CYCLES)
+        assume(period == period_hold && duty == duty_hold);
+end
+```
+
+捕获窗口用 `boot == 0`（或首个复位拍）即可，之后每拍 `assume` 相等。务必在
+`boot >= RESET_CYCLES` 后再施加约束，避免复位期间 X 进入 hold 寄存器。若要
+验证“运行中修改配置”的行为，另建任务和影子模型，不要与固定配置属性混在
+同一个 prove 里。
+
+## depth 与 prove 的关系
+
+`.sby` 的 `depth` 只约束 `mode bmc` 的帧数；`mode prove` 下 `abc pdr` 会自行
+迭代到证明完成、发现反例或超时，**不受 depth 限制**（实测 `.sby` 写
+`depth 50`，证明在 frame 63 才完成）。因此：
+
+- 估算 prove 规模/运行时看 `formal.timeout_s`，不要看 `depth`；
+- 需要限定证明资源时调小 `timeout_s`（超时后 rtlq 会终止整个进程树），
+  而不是调小 `depth`；
+- 只有切到 `mode bmc` 时 `depth` 才是有界的搜索深度。
+
+## 变异证据归档
+
+技能要求做变异检查（改坏 RTL 后 `sby`/`formal` 必须 FAIL），但 `summary.md`
+由 `quality.json` 重生成，无法保留临时变异运行的输出。约定把证据放到
+**`report/mutation/<top>/`**：
+
+- 每个变异一份日志（如 `release_early.log`、`mutant_notes.md`），记录改动的
+  文件:行号、命令、退出码、`DONE (FAIL)` 或 `DONE (PASS)` 结论；
+- `rtlq.py all` / `rtlq.py report` 生成 `summary.md` 时会列出该目录下已存在的
+  文件，便于评审定位；
+- 变异证据不影响 `all` 的退出码（变异是手工/脚本步骤），但交付说明和 A12
+  检查应引用该目录。
+
 要点：
 
 - `prep` 会执行 `formalff -ff2anyinit`，所有未初始化触发器在形式视图中

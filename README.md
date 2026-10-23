@@ -143,6 +143,7 @@ Windows 用 `scripts\rtlq.ps1`，Linux/macOS 用 `scripts/rtlq`；也可直接 `
 3. 测试台：`gen_tb.py` 生成 → 填独立参考模型
 4. 回归：`sim` 必须 PASS
 5. 负向演练：`--bug` 必须 FAIL，且 `all` 的 negative 阶段 PASS
+   （`all` 仅在顶层 RTL 文本含 `INJECT_BUG` 时自动执行；否则该阶段 SKIP 并注明原因）
 6. 波形确认（可选但建议）
 7. 质量门禁：`all` 六阶段全 PASS
 8. 优化迭代：**记录基线 → 改动 → 重测 → compare → 记录文档**

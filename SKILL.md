@@ -57,7 +57,10 @@ description: >-
 3. **测试环境**：写接口 JSON → 技能 `gen_tb.py -w <工作区>` 生成骨架 → 在 `reference_model` 填写期望逻辑
    （参考模型必须独立于 DUT，禁止用被测逻辑验证被测逻辑）
 4. **回归**：技能 `rtlq.py sim -W <工作区> --top <module>`（或 `run.ps1 -Top`）必须 `RESULT: PASS` 且退出码 0
-5. **负向演练**：`rtlq.py sim --bug` 对关键验收点做错误注入，期望 FAIL 且 `rtlq.py all` 的 negative 阶段为 PASS
+5. **负向演练**：`rtlq.py sim --bug` 对关键验收点做错误注入，期望 FAIL 且 `rtlq.py all` 的 negative 阶段为 PASS。
+   `all` 只在顶层 RTL（文件名 stem 等于 `--top`）文本含 `INJECT_BUG` 时自动运行
+   negative；RTL 没写该分支时该阶段记 SKIP 并注明原因（不是失败），此时需手工
+   完成 `sim --bug` 演练或在 RTL 中补注入分支
 6. **波形确认**：技能 `wave.ps1 -W <工作区>` 打开 GTKWave 核对关键时序（实时加信号方法见 toolchain.md）
 7. **质量门禁**：`rtlq.py all -W <工作区> --top <module>`，逐项确认
    - lint：style 0 违例、slang 无 error/warning、Yosys 无 latch/组合环

@@ -70,6 +70,20 @@
      语义在 TB 里构造定向激励，用 `sim --wave` 看波形；
   3. 需要真正的 witness/VCD 时，换用完整 Yosys（含 `yosys-smtbmc` /
      `yosys-witness`）并使用 `[engines] smtbmc`；quality-lite 不支持。
+- `depth` 与证明：`.sby` 的 `depth` 只限制 `mode bmc` 的搜索帧数。`mode prove`
+  下 `abc pdr` 会自行迭代到证明完成、发现反例或超时，**不受 depth 限制**
+  （实测 depth 50、frame 63 才完成证明）。prove 的资源上界是
+  `formal.timeout_s`，不要用 depth 估算证明规模。
+- formal 超时与残留进程：超时后 `rtlq` 会终止 sby 及其 yosys/abc 子进程树
+  （Windows `taskkill /T /F`，POSIX `killpg`），并在 `formal_<top>.log` 写入
+  终止方式；Windows 上若句柄释放较慢，下一次 formal 会重试清理
+  `report\formal\<top>`，仍被占用则返回 ERROR + 清理提示（不会抛 Traceback）。
+  手工清理：`tasklist /FI "IMAGENAME eq yosys-abc.exe"` 找到 PID，再
+  `taskkill /F /T /PID <pid>`。若频繁超时，调大 `formal.timeout_s` 或缩小
+  证明规模（见 `references\examples\formal\README.md`）。
+- sby 多 task：`rtlq formal` 用 `-d <workdir>` 调用 sby，**只支持单 task**。
+  多 task 的 `.sby` 会被 sby 以 “Exactly one task is required when workdir is
+  specified” 拒绝，rtlq 判 FAIL；需要多 task 时拆成多个 `.sby` 分别运行。
 - `[files]` 相对路径：以 `-W` 工作区为基准，**不是** `.sby` 文件所在目录。
   例：`.sby` 在 `<ws>\formal\`、DUT 在 `<ws>\rtl\` 时写 `rtl/<top>.v`；
   写成 `../rtl/<top>.v` 会报 FileNotFoundError。sby 先把文件复制到

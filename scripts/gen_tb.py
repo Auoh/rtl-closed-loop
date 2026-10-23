@@ -11,7 +11,7 @@
   - DUT 例化（支持参数）
   - 随机激励（上升沿 NBA 驱动、负沿检查，1bit 输入可配概率）
   - 输入上升沿捕获（*_cap），供寄存器输出的参考模型使用
-  - reference_model 期望逻辑桩（主要人工填写位置）
+  - reference_model 期望逻辑桩（主要人工填写位置；每个检查周期调用一次）
   - REF_DECLS_BEGIN/END 声明区（跨拍状态/辅助变量，重新生成时保留）
   - DIRECTED_BEGIN/END 定向激励区（重新生成时保留）
   - 自动输出比对 + 统计 + PASS/FAIL
@@ -41,8 +41,8 @@ TB_DIR = WORKSPACE / "tb"
 def decl(prefix, port, clock=False):
     width = port["width"]
     if width == 1:
-        return "    %s %s;" % (prefix, port["name"])
-    return "    %s [%d:0] %s;" % (prefix, width - 1, port["name"])
+        return "%s %s;" % (prefix, port["name"])
+    return "%s [%d:0] %s;" % (prefix, width - 1, port["name"])
 
 
 def reg_decl(port):
@@ -94,6 +94,8 @@ def gen(spec_path, out_path):
     a("// 重新生成保留: reference_model 内部逻辑 + REF_DECLS_BEGIN/END 声明 + DIRECTED_BEGIN/END 定向激励。")
     a("// 其他手工代码（task/function、TOP 层额外逻辑）会被模板覆盖，请自行备份。")
     a("// 人工填写位置: reference_model（期望输出）；跨拍状态在 REF_DECLS 区声明并 initial 赋初值。")
+    a("// 调用纪律: 每个检查周期调用一次 reference_model; check_outputs;（定向段也一样），")
+    a("//           跳过某个 negedge 会让参考模型的跨拍状态与 DUT 失步，造成假失败。")
     a("// 时序约定: 激励在上升沿用 NBA 驱动（零延时），DUT 上升沿采样沿前值；检查在负沿执行，无 #1 延时。")
     a("// 参考模型取值: 寄存器输出用 *_cap（上升沿捕获的采样值）；组合输出用当前输入")
     a("//               （负沿时组合输出已反映本拍输入，*_cap 会落后一拍）。")
@@ -224,6 +226,7 @@ def gen(spec_path, out_path):
         a("        // @(posedge clk); a <= 8'h12; b <= 8'h34;")
         a("        // @(posedge clk); a <= 8'h00; b <= 8'hff;")
         a("        // @(negedge clk); reference_model; check_outputs;  // 检查上一拍")
+        a("        // 每个 negedge 都要调用 reference_model/check_outputs，不能只在部分拍检查。")
     elif old_directed:
         for line in old_directed.splitlines():
             a(line)

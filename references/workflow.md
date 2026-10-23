@@ -29,6 +29,9 @@
 - 参考模型要点：
   - 独立计数/独立状态判定，不依赖 DUT 输出（避免循环论证）
   - 期望值按需求语义编写，注意位宽加宽
+  - **每个检查周期调用一次** `reference_model; check_outputs;`。参考模型的跨拍
+    状态（`ref_*`）按周期推进，跳过某个 `negedge` 会让它与 DUT 失步，之后即使
+    DUT 正确也会报假失败；定向激励段也必须逐拍成对调用，不能只在末尾检查一次。
 - 补充定向边界用例：满/空/溢出/下溢/首读顺序/复位后行为；写在
   `DIRECTED_BEGIN/END` 区，重新生成时保留
 
@@ -41,6 +44,10 @@
 - 在 RTL 里临时用 `ifdef` 注入代表性缺陷（如去掉满/空保护）
 - 确认 TB 能报错且退出码非 0，然后移除注入
 - 目的：验证 TB 敏感度，防止"测试写了但没抓到任何东西"
+- `rtlq.py all` 的 negative 阶段只在**顶层 RTL**（`rtl\<top>.v`，按文件名 stem
+  匹配 `--top`）文本包含 `INJECT_BUG` 时自动运行 `sim --bug`；没有该分支时
+  记为 SKIP 并在 reason 中说明，不是失败。需要门禁覆盖时在 RTL 中保留注入
+  分支，或手工运行 `sim --bug` 并把日志归档。
 
 ## 6. 波形确认
 - `wave.ps1` 打开 GTKWave；无 GUI 环境用 `wave.ps1 -NoGui` 只生成波形文件，
@@ -60,6 +67,9 @@
   `assume(rst_n == 0)` 清除 anyinit，断言用 `boot >= RESET_CYCLES` 门控；
   `[files]` 路径相对 `-W` 工作区。quality-lite 无 `yosys-witness`，失败时按
   `toolchain.md`「形式验证调试」用日志和定向仿真定位。
+- 变异证据（改坏 RTL 后 formal 必须 FAIL）归档到 `report\mutation\<module>\`；
+  `all`/`report` 重生成的 `summary.md` 会列出该目录下的文件（写法见
+  `references\examples\formal\README.md`「变异证据归档」）。
 - 产物：`report\quality.json`、`report\summary.md`、`report\logs\`
 
 ## 8. 优化（基线 → 改动 → 复测 → 对比 → 记录）
@@ -81,6 +91,47 @@
      `docs\optimization_iteration.md`；有回归则回退该改动。
 - 注意：基线在写当前快照之前解析，历史快照只追加、不覆盖；`compare` 默认
   取最近两次快照，因此中间不要插入无关的 `synth` 运行。
+
+### 8.1 优化前后 RTL 等价性（baseline vs optimized）
+
+`lec` 阶段只比较“当前 RTL vs 综合网表”，不比较两版 RTL。优化前后要单独做一次
+等价性检查，用 Yosys `equiv_make` + `equiv_induct`（quality-lite 自带）。
+把优化前版本保存为 `docs\rtl_baseline\<top>.v`（模块名仍为 `<top>`；**不要**放在
+`rtl\`，否则会被 `rtlq` 的 RTL 扫描当作重复模块），在工作区根目录写 `equiv.ys`：
+
+```text
+read_verilog docs/rtl_baseline/<top>.v
+prep -top <top>
+design -stash gold
+read_verilog rtl/<top>.v
+prep -top <top>
+design -stash gate
+design -copy-from gold -as gold <top>
+design -copy-from gate -as gate <top>
+equiv_make gold gate equiv
+hierarchy -top equiv
+async2sync
+equiv_simple
+equiv_induct
+equiv_status -assert
+```
+
+运行（quality-lite 的 Yosys 在 `<质量根>\yosys\bin\yosys.exe`，也可用 PATH 中的
+`yosys`）：
+
+```powershell
+& '<质量根>\yosys\bin\yosys.exe' -s equiv.ys 2>&1 | Tee-Object docs\equiv_<top>_<时间戳>.log
+```
+
+- 两版模块名必须相同（都叫 `<top>`），`design -stash` 后由
+  `-copy-from ... -as gold/gate` 放入同一设计；
+- 异步复位设计保留 `async2sync`，纯同步复位可省略；
+- 状态机若被重新编码，先按 `coding_style.md` 第 13 节加
+  `(* fsm_encoding = "none" *)`，否则会因状态编码不同而失败；
+- `equiv_status -assert` 不等价时返回非 0（实测把 `cnt+1` 改成 `cnt+2` 报
+  `Found 4 unproven $equiv cells`），把日志归档到 `docs\` 并写入优化记录；
+- 输出打拍数、握手时序改变不属于“语义等价优化”，必须同步更新 TB/规格，
+  不能靠这条流程放行。
 
 ## 9. 交付清单
 - `docs\<module>_spec.md`（需求规格）

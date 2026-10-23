@@ -2,6 +2,42 @@
 
 rtl-closed-loop 技能的版本变更记录。版本号遵循语义化版本（SemVer）。
 
+## [v1.1.6] - 2026-10-23
+
+### Fixed
+
+- **D25（P2）** `formal` 超时只杀 sby 子进程，孙进程 `yosys-abc.exe` 继续持有
+  `report/formal/<top>`；下一次 `formal`/`all` 在 `shutil.rmtree` 抛出未捕获的
+  `PermissionError [WinError 32]`，工作区卡死。现在：
+  - `_run` 用 `Popen` + 进程树终止（Windows `taskkill /T /F`，POSIX
+    `start_new_session` + `killpg`），日志写明终止方式与超时秒数；
+  - 清理 formal 工作目录增加 5×0.3s 重试；仍失败时返回 ERROR + 可操作
+    `[HINT]`（列出残留 `yosys-abc.exe` PID、`taskkill` 命令），不再抛
+    Traceback；
+  - `formal` 超时结果本身也带清理提示；
+  - `toolchain.md` 增加「formal 超时与残留进程」「`depth` 与 prove」
+    「sby 单 task」说明。
+
+### Added
+
+- `rtlq.py all`/`report` 生成的 `summary.md` 会列出 `report/mutation/<top>/`
+  下的变异/反例证据文件；约定与写法见
+  `references/examples/formal/README.md`「变异证据归档」。
+- `references/workflow.md` 新增 8.1 节「优化前后 RTL 等价性」：给出可直接
+  复制运行的 `equiv.ys`（`equiv_make` + `async2sync` + `equiv_simple` +
+  `equiv_induct` + `equiv_status -assert`），并用 `cnt+1`→`cnt+2` 实测
+  不等价时返回非 0。
+
+### Changed
+
+- `references/examples/formal/README.md` 补充：数值/计数型不变式的证明策略
+  （逐拍参考等式、代表性常量配置、pdr 对符号化 8 位累加的局限）、保持配置
+  输入恒定的 `*_hold` + `assume` 写法、`depth` 只约束 bmc、变异证据归档。
+- `scripts/gen_tb.py`：端口声明统一 4 空格缩进；注释明确 `reference_model`
+  每个检查周期调用一次（含定向段），跳过 negedge 会与 DUT 跨拍状态失步。
+- `references/workflow.md`、`SKILL.md`、`README.md` 说明 `all` 的 negative
+  阶段仅在顶层 RTL 文本含 `INJECT_BUG` 时运行，否则 SKIP 并注明原因。
+
 ## [v1.1.5] - 2026-10-23
 
 ### Fixed
