@@ -2,6 +2,29 @@
 
 rtl-closed-loop 技能的版本变更记录。版本号遵循语义化版本（SemVer）。
 
+## [v1.1.5] - 2026-10-23
+
+### Fixed
+
+- `references/coding_style.md` 第 1/7/13 节的 F2“保持分支”写法自相矛盾：正文
+  要求写 `state_next = state;`，同节示例却写状态常量。反馈赋值在“块首默认 +
+  case 只写跳转”的结构下仍会被 `opt_dff` 识别为保持并综合成带时钟使能的
+  `$adffe`，导致 `state_next` unproven（实测 LEC proven=9 / unproven=2）。
+  现统一为：每个分支（含保持和 `default`）显式写**该状态的常量**，不要写
+  `state_next = state;`，也不要用块首兜底；`rtlq.py` 的 LEC `[HINT]` 同步
+  指出这两种写法。`README.md` 同步更新。
+- `gen_tb.py` 生成失败分支的 `$fatal` 误用 `%%0d`（该行不做 Python 格式化），
+  Icarus 原样打印 `%0d`；改为 `%0d`，失败时输出真实错误数
+  （如 `TEST FAILED: 19 error(s) found`）。
+- `gen_tb.py` 的时序注释/文档把 `*_cap` 说成参考模型通用取值：负沿检查时
+  `*_cap` 对组合输出已落后一拍。注释与 `coding_style.md` 第 11 节、
+  `toolchain.md`「激励与时序约定」现区分：寄存器输出用 `*_cap`，组合输出用
+  当前输入。
+- `sim --wave` 与普通 `sim` 复用同一 `sim/<top>.vvp` 和
+  `report/logs/sim_<top>.log`，后跑覆盖前跑。波形运行现使用 `_wave` 后缀
+  （`sim/<top>[_bug]_wave.vvp`、`report/logs/sim_<top>[_bug]_wave.log`），
+  普通回归产物保留；`toolchain.md` 补充产物命名说明。
+
 ## [v1.1.4] - 2026-10-23
 
 ### Fixed
@@ -59,7 +82,8 @@ rtl-closed-loop 技能的版本变更记录。版本号遵循语义化版本（S
   `#1` 偏移再阻塞赋值”的旧写法，与 `gen_tb.py`、`toolchain.md` 一致。
 - 新增第 13 节「LEC 友好的状态机写法」：状态寄存器加
   `(* fsm_encoding = "none" *)`，F2 的每个 case/if 分支显式赋值 `state_next`
-  （保持分支写 `state_next = state;`，不要 `else ;`），避免 `opt_dff` 把状态
+  （保持分支写该状态的常量，不要 `else ;`；v1.1.5 修正：不要写
+  `state_next = state;`，反馈赋值仍可能被识别为保持），避免 `opt_dff` 把状态
   寄存器综合成 DFFE 导致 `state_next` unproven；同步更新 §1/§7 示例及
   `SKILL.md`、`workflow.md`、`README.md`。
 - README 更新 formal/LEC 小节：anyinit 模板、`[files]` 基准目录、无 witness

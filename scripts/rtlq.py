@@ -35,7 +35,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
-VERSION = "1.1.4"
+VERSION = "1.1.5"
 SKILL_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_POLICY: Dict[str, Any] = {
     "lint": {
@@ -869,7 +869,7 @@ def do_sim(ctx: Context, args: argparse.Namespace, bug: Optional[bool] = None) -
     grammar = getattr(args, "grammar", None) or (ctx.policy.get("sim") or {}).get("grammar", "2012")
     sim_dir = ctx.ws / "sim"
     sim_dir.mkdir(parents=True, exist_ok=True)
-    vvp_out = sim_dir / (top + ("_bug.vvp" if use_bug else ".vvp"))
+    vvp_out = sim_dir / (top + ("_bug" if use_bug else "") + ("_wave" if use_wave else "") + ".vvp")
     vcd = sim_dir / "wave.vcd"
     if use_wave:
         try:
@@ -891,7 +891,9 @@ def do_sim(ctx: Context, args: argparse.Namespace, bug: Optional[bool] = None) -
         c += [str(f) for f in files]
         return c
 
-    compile_log = ctx.log_path("sim_compile_%s%s" % (top, "_bug" if use_bug else ""))
+    compile_log = ctx.log_path("sim_compile_%s%s%s" %
+                               (top, "_bug" if use_bug else "",
+                                "_wave" if use_wave else ""))
     cr = _run(_compile_cmd(ctx.tools.iverilog), ctx.ws, ctx.stage_timeout("sim"), compile_log)
     tool_retry: Optional[Dict[str, Any]] = None
     parse_error = (cr.rc != 0 and not cr.timed_out and
@@ -905,7 +907,8 @@ def do_sim(ctx: Context, args: argparse.Namespace, bug: Optional[bool] = None) -
             original_iv = ctx.tools.iverilog
             first_log, first_rc = compile_log, cr.rc
             compile_log = ctx.log_path(
-                "sim_compile_%s%s_retry" % (top, "_bug" if use_bug else ""))
+                "sim_compile_%s%s%s_retry" % (top, "_bug" if use_bug else "",
+                                              "_wave" if use_wave else ""))
             cr = _run(_compile_cmd(iv2), ctx.ws, ctx.stage_timeout("sim"), compile_log)
             ctx.tools.iverilog, ctx.tools.vvp = iv2, vvp2
             tool_retry = {
@@ -933,7 +936,9 @@ def do_sim(ctx: Context, args: argparse.Namespace, bug: Optional[bool] = None) -
             result["hint"] = ("iverilog 位于含空格路径，内部子进程解析失败；"
                               "请运行 scripts/setup.ps1 -Install 部署到无空格缓存根")
         return result
-    run_log = ctx.log_path("sim_%s%s" % (top, "_bug" if use_bug else ""))
+    run_log = ctx.log_path("sim_%s%s%s" %
+                           (top, "_bug" if use_bug else "",
+                            "_wave" if use_wave else ""))
     rr = _run([ctx.tools.vvp, str(vvp_out)], sim_dir, ctx.stage_timeout("sim"), run_log)
     text = rr.out
     if "RESULT: PASS" in text:
@@ -1186,9 +1191,10 @@ def do_lec(ctx: Context, args: argparse.Namespace) -> Dict[str, Any]:
     if unproven and not bl and unproven_names and \
             set(unproven_names) <= {"state_next"}:
         result["hint"] = (
-            "unproven 仅剩 state_next：常见原因是 F2 用 `else ;` 保持，综合出 "
-            "DFFE。请按 references/coding_style.md 第 13 节在每个分支显式赋值 "
-            "state_next 后重跑。blacklist 默认为空，不会自动排除该信号。")
+            "unproven 仅剩 state_next：常见原因是 F2 用 `else ;` 或块首 "
+            "`state_next = state;` 兜底保持，综合出 DFFE。请按 "
+            "references/coding_style.md 第 13 节在每个分支显式赋值状态常量后重跑。"
+            "blacklist 默认为空，不会自动排除该信号。")
     return result
 
 

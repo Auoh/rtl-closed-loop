@@ -10,7 +10,7 @@
   - 时钟 / 复位生成
   - DUT 例化（支持参数）
   - 随机激励（上升沿 NBA 驱动、负沿检查，1bit 输入可配概率）
-  - 输入上升沿捕获（*_cap），供参考模型使用
+  - 输入上升沿捕获（*_cap），供寄存器输出的参考模型使用
   - reference_model 期望逻辑桩（主要人工填写位置）
   - REF_DECLS_BEGIN/END 声明区（跨拍状态/辅助变量，重新生成时保留）
   - DIRECTED_BEGIN/END 定向激励区（重新生成时保留）
@@ -94,8 +94,9 @@ def gen(spec_path, out_path):
     a("// 重新生成保留: reference_model 内部逻辑 + REF_DECLS_BEGIN/END 声明 + DIRECTED_BEGIN/END 定向激励。")
     a("// 其他手工代码（task/function、TOP 层额外逻辑）会被模板覆盖，请自行备份。")
     a("// 人工填写位置: reference_model（期望输出）；跨拍状态在 REF_DECLS 区声明并 initial 赋初值。")
-    a("// 时序约定: 激励在上升沿用 NBA 驱动（零延时），DUT 上升沿采样沿前值；")
-    a("//           参考模型使用 *_cap（上升沿捕获的采样值），检查在负沿执行，无 #1 延时。")
+    a("// 时序约定: 激励在上升沿用 NBA 驱动（零延时），DUT 上升沿采样沿前值；检查在负沿执行，无 #1 延时。")
+    a("// 参考模型取值: 寄存器输出用 *_cap（上升沿捕获的采样值）；组合输出用当前输入")
+    a("//               （负沿时组合输出已反映本拍输入，*_cap 会落后一拍）。")
     a("`timescale 1ns/1ps")
     a("")
     a("module %s;" % top)
@@ -138,7 +139,7 @@ def gen(spec_path, out_path):
     a("    initial %s = 0;" % clk)
     a("    always #%g %s = ~%s;" % (period / 2.0, clk, clk))
     a("")
-    a("    // ---- 输入捕获（正沿采样，供参考模型在负沿使用）----")
+    a("    // ---- 输入捕获（正沿采样；寄存器输出参考模型在负沿使用）----")
     for p in inputs:
         w = p["width"]
         a("    reg [%d:0] %s_cap;" % (w - 1, p["name"]))
@@ -184,6 +185,7 @@ def gen(spec_path, out_path):
         for line in old_ref.splitlines():
             a(line.rstrip())
     else:
+        a("            // 寄存器输出用 *_cap（上沿采样值）；组合输出用当前输入。")
         for p in outputs:
             a("            // TODO: exp_%s = ...;  例如: exp_sum = {1'b0, a_cap} + {1'b0, b_cap};" % p["name"])
             a("            exp_%s = %d'b0;" % (p["name"], p["width"]))
@@ -238,7 +240,7 @@ def gen(spec_path, out_path):
         else:
             a("            %s <= $random(seed);" % p["name"])
     a("            @(negedge %s);            // 半拍后 DUT 输出稳定" % clk)
-    a("            reference_model;          // 期望值基于 *_cap（本沿采样值）")
+    a("            reference_model;          // 寄存器输出用 *_cap；组合输出用当前输入")
     a("            check_outputs;")
     a("        end")
     a("")
@@ -251,7 +253,7 @@ def gen(spec_path, out_path):
     a("            $finish;")
     a("        end else begin")
     a("            $display(\"RESULT: FAIL (%0d errors)\", errors);")
-    a("            $fatal(1, \"TEST FAILED: %%0d error(s) found\", errors);")
+    a("            $fatal(1, \"TEST FAILED: %0d error(s) found\", errors);")
     a("        end")
     a("    end")
     a("")

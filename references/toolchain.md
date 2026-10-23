@@ -19,6 +19,11 @@
 | `& '<技能>\scripts\export.ps1' -Out <zip>` | 导出离线包（技能+全部工具链），供无网环境部署 |
 | `& '<技能>\scripts\setup.ps1' -Offline` | 无网恢复：自动找工作区根目录的离线包（`-Offline -Zip <路径>` 显式指定） |
 
+`sim` 产物命名：`sim\<top>[_bug].vvp`、`report\logs\sim_<top>[_bug].log`；加
+`--wave` 时统一多一个 `_wave` 后缀（`sim\<top>[_bug]_wave.vvp`、
+`report\logs\sim_<top>[_bug]_wave.log`），因此波形运行不会覆盖普通回归的编译/运行
+日志。波形文件仍为 `sim\wave.vcd`（`--fst` 另出 `sim\wave.fst`）。
+
 ## Verible 格式化（verible-verilog-format）
 - 工具位置：`C:\rtl-toolchain\verible\bin\verible-verilog-format.exe`（与 iverilog 同级，由 export.ps1 纳入离线包 `toolchain\verible`，`setup.ps1 -Offline` 自动恢复）。
 - 固定参数：`--indentation_spaces=4 --wrap_end_else_clauses`（4 空格缩进、end/else 分行，符合编码规范）。
@@ -215,8 +220,9 @@ Linux/macOS 用 `scripts/run.sh [模块] [bug|wave] [工作区]`。
 ## 激励与时序约定（理想仿真、零延时）
 - 激励（wr_en/rd_en/wr_data 等）用 **NBA 在上升沿驱动**，零延时提交；
   DUT 在上升沿采样"沿前值"（上一拍驱动的值），完全符合时序逻辑语义。
-- TB 在上升沿用阻塞读捕获 DUT 实际采样的输入（`*_cap`），参考模型在负沿
-  使用捕获值计算期望（负沿时 DUT 输出已稳定，**不需要任何 #1 延时**）。
+- TB 在上升沿用阻塞读捕获 DUT 实际采样的输入（`*_cap`）。负沿检查时，
+  **寄存器输出**的参考模型用 `*_cap`（与采样沿对齐）；**组合输出**直接用当前
+  输入（负沿时组合输出已反映本拍输入）。**不需要任何 #1 延时**。
 - 波形表现：所有信号（激励与输出）都在上升沿变化，无中间沿跳变。
 - 反例（不要再用）：负沿驱动 + #1 会产生"下沿跳变"的人为时序痕迹，
   且违背"理想仿真不应有延时信息"的语义。

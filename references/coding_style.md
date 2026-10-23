@@ -6,7 +6,9 @@
 
 ## 1. 状态机统一三段式
 - F1：状态寄存器（时序）：`state <= state_next`
-- F2：次态组合逻辑（`always @(*)`）：开头写默认 `state_next = state;`，再用 case 覆盖
+- F2：次态组合逻辑（`always @(*)`）：每个 case/if 分支显式赋值 `state_next`；
+  保持分支写该状态的常量（如 `state_next = IDLE;`），`default` 也写常量。
+  **不要**用块首 `state_next = state;` 兜底，也不要写 `else ;`（见第 13 节）
 - F3：数据通路/标志（时序）：逐信号 always 块
 - 禁止把次态计算与状态寄存器写进同一个 always 块。
 
@@ -104,7 +106,7 @@ else ;  // hold
 
 ## 7. case / default
 - 每个 `case` 必须写出 `default` 分支，禁止省略；`default` 必须显式写出对信号的赋值，禁止空语句或空 begin-end。
-- 组合逻辑的 `case`（如 F2 次态）：所有分支（含 `default`）都必须显式写出对输出的赋值，避免综合推断 latch。F2 的保持分支写 `state_next = state;`，不要写 `else ;`（原因见第 13 节）。
+- 组合逻辑的 `case`（如 F2 次态）：所有分支（含 `default`）都必须显式写出对输出的赋值，避免综合推断 latch。F2 的保持分支写该状态的**常量**（如 `state_next = IDLE;`），不要写 `state_next = state;` 或 `else ;`（原因见第 13 节）。
 - 时序逻辑 `case` 的 `default` 表示保持：写显式自赋值，如 `default: cnt <= cnt;`（不要写 `default: ;`）。
 
 ## 8. 不使用 function
@@ -126,7 +128,7 @@ else ;  // hold
 - 外部提供的 RTL：并入工程前必须先跑一次带 `-Report` 的检查，报告随交付物归档到 `docs\`，并按建议修复后才能进入仿真流程。
 ## 11. 附：验证建议（TB 激励纪律）
 - 同步接口信号（`tx_wr`/`tx_data`/`rx_rd`/`rst_n`）在 `@(posedge clk)` 上用**非阻塞赋值（NBA）**驱动，零延时提交；DUT 在同一沿采样到的是沿前值（上一拍驱动的值），符合真实时序逻辑语义。
-- TB 在上升沿用**阻塞赋值捕获** DUT 实际采样的输入到 `*_cap`；参考模型在负沿使用 `*_cap` 计算期望并检查输出（此时 DUT 输出已稳定）。全程**不使用 `#1` 或任何延时**。
+- TB 在上升沿用**阻塞赋值捕获** DUT 实际采样的输入到 `*_cap`；负沿检查时，**寄存器输出**的参考模型用 `*_cap`（与 DUT 采样沿对齐），**组合输出**直接用当前输入（负沿时组合输出已反映本拍输入，`*_cap` 会落后一拍）。全程**不使用 `#1` 或任何延时**。
 - 不要用"沿后 `#1` 偏移再阻塞赋值"驱动激励：它会在负沿制造人为跳变，违背"理想仿真、零延时"约定（见 `toolchain.md`「激励与时序约定」）。
 - 同一拍多个任务不要对同一信号重复赋值；`gen_tb.py` 生成的模板已按上述约定实现，手工 TB 也照此执行。
 
@@ -160,7 +162,10 @@ Yosys LEC（`equiv_opt ... synth`）逐线比较 RTL 与综合网表。三段式
    (* fsm_encoding = "none" *) reg [1:0] state;
    ```
 2. F2 的每个 case 分支、每条 if/else 路径都**显式赋值** `state_next`；保持分支
-   写 `state_next = state;`，不要写 `else ;`，也不要只靠块首默认值兜底：
+   必须写**该状态的常量**（如 `state_next = ST_IDLE;`），不要写
+   `state_next = state;`，不要写 `else ;`，也不要只靠块首默认值兜底。
+   反馈赋值 `state_next = state;` 在部分分支结构下仍会被 `opt_dff` 识别为
+   “保持”，生成带时钟使能的 `$adffe`，导致 `state_next` unproven：
    ```verilog
    always @(*) begin
        case (state)
@@ -190,6 +195,6 @@ Yosys LEC（`equiv_opt ... synth`）逐线比较 RTL 与综合网表。三段式
    blacklist 不得用于掩盖真实的不等价。
 
 注意：第 5 节“最后一个 else 写 `else ;` 表示保持”的简写**不适用于 F2 的
-`state_next`**；次态必须显式写出保持值。验证方式：把 `rtl/ch_num_gen.v` 的 F2
-按本节改写（保持分支显式赋值）后，空 blacklist 下 `lec` 从 2 个 unproven 变为
-`unproven=0`（34/34 proven）。
+`state_next`**；次态必须显式写出保持状态的**常量**。验证方式：把
+`rtl/ch_num_gen.v` 的 F2 按本节改写（每个保持分支写状态常量）后，空 blacklist
+下 `lec` 从 2 个 unproven 变为 `unproven=0`（34/34 proven）。

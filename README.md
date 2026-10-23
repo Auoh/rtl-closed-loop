@@ -205,9 +205,10 @@ LEC blacklist 只能用于工具无法匹配的等价状态编码，**不得用�
 `state_next`，`lec`/`all` 会打印 `[HINT]` 指向第 13 节，但不会自动排除。
 
 状态机优先按 `references/coding_style.md` 第 13 节写：状态寄存器加
-`(* fsm_encoding = "none" *)`，F2 的每个 `case`/`if` 分支都显式赋值 `state_next`
-（保持分支写 `state_next = state;`，不要写 `else ;`）。这能避免 Yosys 把状态
-寄存器综合成带时钟使能的 `$adffe`，让空白 blacklist 也能 `unproven=0`。
+`(* fsm_encoding = "none" *)`，F2 的每个 `case`/`if` 分支都显式赋值 `state_next`；
+保持分支写**该状态的常量**（如 `state_next = ST_IDLE;`），不要写
+`state_next = state;` 或 `else ;`——反馈赋值仍可能被识别为保持并生成 `$adffe`。
+这样空白 blacklist 也能 `unproven=0`。
 
 ## 8. 形式验证（sby）
 

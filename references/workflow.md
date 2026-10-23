@@ -52,8 +52,9 @@
 - lint：R1-R10 风格 0 违例、slang 0 warning、Yosys 结构检查无 latch/组合环
 - synth：cells/FF/depth 不超过 `config\ppa_budget.json`；超限必须优化或书面说明
 - lec：Yosys `equiv_opt` unproven=0。状态机按 `coding_style.md` 第 13 节写
-  （`(* fsm_encoding = "none" *)` + F2 每个分支显式赋值 `state_next`），通常可
-  保持 blacklist 为空；blacklist 仅用于工具无法匹配的等价编码，不得掩盖真实不等价。
+  （`(* fsm_encoding = "none" *)` + F2 每个分支显式赋值 `state_next`，保持分支
+  写状态常量、不要写 `state_next = state;`），通常可保持 blacklist 为空；
+  blacklist 仅用于工具无法匹配的等价编码，不得掩盖真实不等价。
 - formal：`formal\<module>.sby` 的 prove 必须 `DONE (PASS)`；无配置时 SKIP 并说明。
   最小可运行模板见 `references\examples\formal\`：`initial boot = 0` + 复位窗口内
   `assume(rst_n == 0)` 清除 anyinit，断言用 `boot >= RESET_CYCLES` 门控；
