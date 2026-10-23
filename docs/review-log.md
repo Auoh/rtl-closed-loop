@@ -19,7 +19,7 @@ lint、PPA 预算、LEC、formal、快照对比、优化迭代、交付、文档
 
 | 项目 | 状态 |
 |---|---|
-| streak | 0 / 3 |
+| streak | 2 / 3 |
 | demo 1 `uart_tx`（v1.1.1） | FAIL（A7、A12；其余 10 项通过） |
 | demo 1 `uart_tx`（v1.1.2 重跑） | FAIL（仅 A12；A1-A11 全过，空 blacklist 下 LEC 21/0） |
 | demo 1 `uart_tx`（v1.1.3 重跑） | **PASS**（A1-A12 全过；streak 1/3） |
@@ -71,6 +71,10 @@ compare rc=0（三项改善）。评审额外核验：TB 捕获多路同时授�
 | D18 | P3 | `scripts/format.ps1:42,49,57,60` | 裸 `python`，Store 桩下失败 | `bfe9c45`：`rtl-tools.ps1` 新增 `Find-RtlPython`（跳过 exit 49 桩），format/run/wave 复用 |
 | D19 | P3 | `references/examples/formal/` | 缺协议级多周期属性模板 | `bfe9c45`：新增 `pulse_stretch` rtl/sby/fv + README（影子计数器、boot 位宽坑） |
 | D20 | P3 | `scripts/gen_tb.py:88-90,216-225` | 定向激励无保留区 | `bfe9c45`：新增 `DIRECTED_BEGIN/END`，重生成保留 |
+| D21 | P2 | `references/coding_style.md:6-7,106,164-168` | §1/§7/§13 正文要求保持分支写 `state_next = state;`（反馈赋值仍生成 `$adffe`），与示例的常量写法矛盾 | `26e4f6d`：统一为每分支（含保持/`default`）写状态常量，明确禁止 `state_next = state;` 与块首兜底；`README.md`、`workflow.md`、LEC `[HINT]`、`CHANGELOG` 同步 |
+| D22 | P3 | `scripts/gen_tb.py:256` | 生成的 `$fatal` 格式串写成 `%%0d`，Icarus 原样打印 `%0d` | `26e4f6d`：改为 `%0d`，失败时输出真实错误数 |
+| D23 | P3 | `scripts/gen_tb.py:13,97-98,142,188,242` | 注释一律要求参考模型用 `*_cap`，对组合输出会落后一拍 | `26e4f6d`：注释区分寄存器输出（用 `*_cap`）与组合输出（用当前输入）；`coding_style.md §11`、`toolchain.md` 同步 |
+| D24 | P3 | `scripts/rtlq.py:872,894-895,910-911,939-941` | `sim --wave` 复用同一 vvp 与 `sim_<top>.log`，覆盖普通 sim 产物 | `26e4f6d`：wave 运行使用 `_wave` 后缀的 vvp/编译日志/运行日志；`toolchain.md` 记录产物命名 |
 
 D4 复验证据（v1.1.2，我的独立复现）：
 - 无 `RTL_TOOLCHAIN`、工作区无 `tools/`：`doctor` rc 0，iverilog 指向 `C:\rtl-toolchain\iverilog\bin`；`sim` rc 0，`checks=4478 errors=0`。
@@ -90,7 +94,7 @@ D8-D14 复验证据（v1.1.3，我的独立复现）：
 - D12：`reg_adder` 临时副本加 1 位 keep 寄存器（48 cells/10 ff，预算内）：默认 `all` rc 0 但内嵌基线显示 `FAIL (cells, ff)`；加 `--fail-on-regression` → rc 1、`quality.json status=FAIL`。
 - D9/D11/D13：`coding_style.md` 已无「沿后 #1」；`toolchain.md:57/68` 与 README 写明无 `yosys-witness`、`[files]` 相对 `-W` 工作区。
 
-## 待修复（v1.1.4 demo 2 发现，2026-10-23）
+### D21-D24 原始问题（v1.1.4 demo 2 发现，已由 v1.1.5 修复）
 
 | ID | 级别 | 位置 | 问题 | 期望修复 |
 |---|---|---|---|---|
@@ -103,6 +107,29 @@ D8-D14 复验证据（v1.1.3，我的独立复现）：
 - if/else + `else state_next = state;` → rc=1，proven=9 unproven=2（`unproven_signals=["state_next"]`）；
 - 同一 if/else 结构改每分支常量（`= ST_P0/1/2`）→ rc=0，proven=11 unproven=0；
 - 交付版 `case(state)` + 常量 → rc=0，11/0。
+
+### D21-D24 复验证据（v1.1.5，评审独立复现，`26e4f6d`）
+
+- D21：用 v1.1.5 重跑上述对照 —— 反馈保持版 `rtlq.py lec` rc=1，proven=9 unproven=2，
+  `unproven_signals=["state_next"]`，`[HINT]` 已改为「`else ;` 或块首 `state_next = state;`
+  兜底保持……每个分支显式赋值状态常量」；常量版 rc=0 proven=11 unproven=0。
+  文档核对：`coding_style.md` §1/§7/§13、`README.md` §7.2、`workflow.md` 均改为
+  「保持分支写该状态的常量」，§13 示例（`ST_IDLE`/`ST_BUSY`）与正文一致。
+  补充观察：并非所有反馈写法都会触发 DFFE（逐状态嵌套 `else state_next = state;`
+  实测 9/0），新文档「部分分支结构下」的措辞与此相符。
+- D22：重新生成 `tb_rr_arbiter.v`，`$fatal` 行为
+  `$fatal(1, "TEST FAILED: %0d error(s) found", errors);`；`sim --bug` rc=1，
+  日志输出 `TEST FAILED: 151 error(s) found`，无字面 `%0d`。
+- D23：生成 TB 头部/捕获区/参考模型处均含新措辞（寄存器输出 `*_cap`、组合输出用当前输入）；
+  `coding_style.md §11` 与 `toolchain.md`「激励与时序约定」同步；重生成后手写
+  `reference_model` 与 `DIRECTED` 区保留，`sim` 仍 `checks=534 errors=0`。
+- D24：普通 `sim` 后跑 `sim --wave`：`sim/rr_arbiter.vvp` 与
+  `report/logs/sim_rr_arbiter.log` 保留，新增 `rr_arbiter_wave.vvp`、
+  `sim_compile_rr_arbiter_wave.log`、`sim_rr_arbiter_wave.log`，`sim/wave.vcd` 非空；
+  两次运行均 rc=0、checks=534。
+- 回归（v1.1.5，评审独立复跑 `rtlq.py all`）：`rr_arbiter` rc=0
+  （534/0，negative PASS，30/2/10，LEC 11/0，formal PASS）；`uart_tx` rc=0
+  （4000/0，63/18/5，LEC 21/0，formal PASS）。`py_compile` 通过。
 
 ### D15-D20（v1.1.4 已修复，证据）
 
@@ -162,4 +189,6 @@ rtlq.py sim -W <workspace> --top uart_tx     # 不设 RTL_TOOLCHAIN
 - `v1.1.2`（`dd3a5a1`）：D4/D5/D6 修复 + README，已推送。
 - `v1.1.3`（`be2c8f7`）：D8-D14 修复（formal 模板、FSM/LEC 文档、engines 字段、回归门禁），已推送。
 - `v1.1.4`（`bfe9c45`）：D15-D20 修复（LEC 默认 blacklist、TB 定向区、Python 探测、协议级 formal 模板），已推送。
+- `pre-fix-20261023-0928-D21`（`9a787a5`）：D21-D24 修复前备份，已推送。
+- `v1.1.5`（`26e4f6d`）：D21-D24 修复（F2 保持分支文档、`$fatal` 格式、`*_cap` 适用性、wave 产物命名），已推送。
 - 流程：确认问题点后先把当前状态打 tag 并 push，再执行修改；修复复验通过后打版本 tag 并 push。
