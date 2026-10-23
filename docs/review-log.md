@@ -509,3 +509,36 @@ equiv_opt -multiclock -assert synth`。
 
 **版本**：`v1.1.10`（本提交）。按当前约定未由实现方 push/tag；由 peer 独立
 复验后推送并打 tag。
+
+### D38 复验 + run4 spi_master 审计第 1 轮（2026-10-24）
+
+**D38 复验（只读副本，`git archive`）**
+- v1.1.9（`2782941`）对 3 模块 SPI 设计执行 `lec` → rc1：
+  `ERROR: No SAT model available for cell u_tx_fifo_gate ($paramod$...spi_fifo)`，
+  `proven=0 unproven=0`。
+- v1.1.10（`b86fc07`）同一工作区 → `proven=502 unproven=0`，rc0。
+- 单模块回归 `sync_fifo`：v1.1.9 与 v1.1.10 均 `proven=51 unproven=0`，无回归。
+- 修复与根因一致：`do_lec` 在 `equiv_opt` 前插入 `flatten`；层次/参数化
+  子模块不再以无 SAT model 的 `$paramod` 单元进入 miter。
+
+**run4 交付审计（A1-A15，第 1 轮）**
+- 交付：`D:/tmp/rtl-acceptance/run4`，3 模块、989 行，`DELIVERY.md` ready。
+- 独立副本 `rtlq.py all` rc0：lint style=0/slang 0；sim 680/0（mon 12171/0）；
+  negative expected=FAIL actual=FAIL；synth 1339/381/19；LEC 502/0；formal PASS。
+- **行为判定全部来自独立 TB + VCD 解析**（`audit-run4-1/wave`，224 项检查
+  224 PASS）：R1-R15/B1-B15、四种 CPOL/CPHA 的采样/更新沿、CS setup/hold、
+  SCLK 周期与占空、MSB 位序、RX 字节/rx_last、握手保持、复位（同步释放与
+  异步中止）、软复位、下溢、溢出、IRQ/W1C、同拍读写、busy 写保护。
+- 关键测量（VCD 时间戳）：DIV=4 setup/hold=80ns、半周期=40ns；DIV=255
+  setup/hold=5100ns、半周期=2550ns；3 字节帧 48 边沿、字节间隔≤80ns、
+  rx_last=0/0/1；背靠背 CS 高 1 clk；溢出 17 帧后 RX_LEVEL=16 且按序排空
+  0x80..0x8F；TX 满时 tx_ready=0、STATUS.tx_full=1、第 17 次写入被拒；
+  异步复位同拍 cs_n=F/sclk=0/tx_ready=0/rx_valid=0。
+- 负向：`sim --bug` rc1，B13 检查 `tx_ready low when full` 触发。
+- 形式非空洞（独立施加）：reset/CS、idle enable、FIFO full 三个变异均被
+  abc pdr 杀死（Output 0/3/22，frame 3/3/29，DONE FAIL rc2）。
+- 可复现：两次 `all` 的 cells/ff/depth delta=0；`gen_tb.py` 重生成保留
+  `reference_model` 体、REF_DECLS 与 DIRECTED 手工段。
+- 结论：A1-A15 全部通过；第 1 轮通过，待第 2 轮独立复跑后验收。
+
+**版本**：`v1.1.10`（annotated `0708037`）指向 `b86fc07`，已推送。
