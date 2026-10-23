@@ -19,7 +19,7 @@ lint、PPA 预算、LEC、formal、快照对比、优化迭代、交付、文档
 
 | 项目 | 状态 |
 |---|---|
-| streak | 3 / 3（待 D25 修复后判定验收通过） |
+| streak | 3 / 3 — **验收通过**（v1.1.6，无未修复 P1/P2） |
 | demo 1 `uart_tx`（v1.1.1） | FAIL（A7、A12；其余 10 项通过） |
 | demo 1 `uart_tx`（v1.1.2 重跑） | FAIL（仅 A12；A1-A11 全过，空 blacklist 下 LEC 21/0） |
 | demo 1 `uart_tx`（v1.1.3 重跑） | **PASS**（A1-A12 全过；streak 1/3） |
@@ -84,6 +84,15 @@ gap_log 10 项无阻塞（A12 通过），其中 G2 经评审独立复现升级�
 | D22 | P3 | `scripts/gen_tb.py:256` | 生成的 `$fatal` 格式串写成 `%%0d`，Icarus 原样打印 `%0d` | `26e4f6d`：改为 `%0d`，失败时输出真实错误数 |
 | D23 | P3 | `scripts/gen_tb.py:13,97-98,142,188,242` | 注释一律要求参考模型用 `*_cap`，对组合输出会落后一拍 | `26e4f6d`：注释区分寄存器输出（用 `*_cap`）与组合输出（用当前输入）；`coding_style.md §11`、`toolchain.md` 同步 |
 | D24 | P3 | `scripts/rtlq.py:872,894-895,910-911,939-941` | `sim --wave` 复用同一 vvp 与 `sim_<top>.log`，覆盖普通 sim 产物 | `26e4f6d`：wave 运行使用 `_wave` 后缀的 vvp/编译日志/运行日志；`toolchain.md` 记录产物命名 |
+| D25 | P2 | `scripts/rtlq.py:1316-1318,184-214` | formal 超时残留 `yosys-abc.exe` 锁目录，下次 `shutil.rmtree` 抛未捕获 `PermissionError` | `f3f4549`：Popen + 进程树终止（`taskkill /T /F` / `killpg`），`rmtree` 重试后转 ERROR+HINT，超时结果附清理提示 |
+| D26 | P3 | `references/examples/formal/README.md` | 数值/计数型不变式无证明策略（G1） | `f3f4549`：新增逐拍参考等式 + 代表性常量配置 + pdr 局限 |
+| D27 | P3 | `references/examples/formal/README.md` | 无配置输入保持写法（G4） | `f3f4549`：新增 `*_hold` 捕获 + `assume` 保持模式 |
+| D28 | P3 | `references/workflow.md:29-34`、`scripts/gen_tb.py` | 未说明 `reference_model` 每周期调用一次（G5） | `f3f4549`：workflow §3 与 gen_tb 头/定向区注释补充 |
+| D29 | P3 | `scripts/gen_tb.py:41-45,108-113` | 端口声明缩进不一致（G6） | `f3f4549`：统一 4 空格，重新生成验证 |
+| D30 | P3 | `SKILL.md:60`、`scripts/rtlq.py:1366,1709` | negative 阶段触发条件未文档化（G7） | `f3f4549`：SKILL/workflow/README 写明 `INJECT_BUG` 触发与 SKIP 语义 |
+| D31 | P3 | `references/toolchain.md:59-61` | `depth` 在 prove 下不是帧上界（G8） | `f3f4549`：README/toolchain 说明 depth 仅约束 bmc |
+| D32 | P3 | `references/examples/formal/README.md:55-57`、`scripts/rtlq.py:1678` | 变异证据无归档位（G9） | `f3f4549`：约定 `report/mutation/<top>/`，summary 自动列出 |
+| D33 | P3 | `references/workflow.md:56,71-73` | 无 baseline vs 优化后 RTL 等价流程（G10） | `f3f4549`：workflow §8.1 新增 `equiv_make/async2sync/equiv_induct` recipe |
 
 D4 复验证据（v1.1.2，我的独立复现）：
 - 无 `RTL_TOOLCHAIN`、工作区无 `tools/`：`doctor` rc 0，iverilog 指向 `C:\rtl-toolchain\iverilog\bin`；`sim` rc 0，`checks=4478 errors=0`。
@@ -140,7 +149,7 @@ D8-D14 复验证据（v1.1.3，我的独立复现）：
   （534/0，negative PASS，30/2/10，LEC 11/0，formal PASS）；`uart_tx` rc=0
   （4000/0，63/18/5，LEC 21/0，formal PASS）。`py_compile` 通过。
 
-## 待修复（v1.1.5 demo 3 发现，2026-10-23）
+## D25-D33 原始问题（v1.1.5 demo 3 发现，已由 v1.1.6 修复）
 
 | ID | 级别 | 位置 | 问题 | 期望修复 |
 |---|---|---|---|---|
@@ -159,9 +168,35 @@ D25 复现证据（评审独立复现）：副本工作区把 `formal.timeout_s`
 显示残留进程持有 `report/formal/pwm_gen`；再次 `rtlq.py formal` → rc=1，
 `PermissionError: [WinError 32]` traceback；残留进程退出后 `rmtree` 恢复正常。
 
+### D25-D33 复验证据（v1.1.6，评审独立复现，`f3f4549`）
+
+- D25（主路径）：副本工作区 `formal.timeout_s=5` → 第一次 `formal` rc=1，日志含
+  `[rtlq] TIMEOUT after 5 s; killed process tree: taskkill /T /F /PID <pid>`，
+  立即检查无残留 `yosys-abc.exe`；第二次 `formal` rc=1，日志无 `Traceback`，
+  干净超时；恢复 `timeout_s=300` → rc=0 `DONE (PASS)`，仍无残留进程。
+- D25（清理失败路径）：用独立进程保持 `report/formal/pwm_gen/engine_0/logfile.txt`
+  打开，再跑 `formal` → rc=1，输出 `[ERROR] 无法清理上一次的形式验证目录
+  （PermissionError: [WinError 32] ...）` 与 `[HINT]`，无 Traceback。
+- D26/D27/D31：`references/examples/formal/README.md` 新增「数值/计数型不变式的
+  证明策略」「保持配置输入恒定」「depth 与 prove 的关系」「变异证据归档」四节；
+  `toolchain.md` 同步 depth、残留进程、单 task 三点。
+- D28：`workflow.md` §3 与 `gen_tb.py` 头/定向区注释要求每周期调用
+  `reference_model; check_outputs;`。
+- D29：重新生成 TB，`clk`/`period`/`duty`/`pwm_out`/`rst_n` 声明均为 4 空格。
+- D30：`SKILL.md:60-63`、`workflow.md` §5、README 第 6 节写明 negative 仅在顶层
+  RTL 含 `INJECT_BUG` 时运行，否则 SKIP 并注明原因。
+- D32：在副本放入 `report/mutation/pwm_gen/offbyone.log` 后运行
+  `rtlq.py report`，`summary.md` 出现「变异/反例证据」并列出该文件。
+- D33：按 `workflow.md` §8.1 的 `equiv.ys` 对 `docs/rtl_baseline/pwm_gen.v` 与
+  优化后 `rtl/pwm_gen.v` 运行 quality-lite Yosys → rc=0，
+  `9 are proven and 0 are unproven`，`Equivalence successfully proven!`。
+- 回归（v1.1.6，评审独立复跑 `rtlq.py all`）：`pwm_gen` rc=0（1666/0、109/8/11、
+  LEC 9/0、formal PASS）；`rr_arbiter` rc=0（534/0、30/2/10、LEC 11/0）；
+  `uart_tx` rc=0（4000/0、63/18/5、LEC 21/0）；`py_compile` 通过。
+
 误报排除（run3 gap）：G3「多任务 sby 被误判 PASS」——sby 在 rtlq 传 `-d` 时直接拒绝
 多任务（`Exactly one task is required when workdir is specified`），rtlq 返回 FAIL，
-误判路径不可达。
+误判路径不可达；`toolchain.md` 已注明 rtlq 只支持单 task。
 
 ### D15-D20（v1.1.4 已修复，证据）
 
@@ -224,4 +259,12 @@ rtlq.py sim -W <workspace> --top uart_tx     # 不设 RTL_TOOLCHAIN
 - `pre-fix-20261023-0928-D21`（`9a787a5`）：D21-D24 修复前备份，已推送。
 - `v1.1.5`（`26e4f6d`）：D21-D24 修复（F2 保持分支文档、`$fatal` 格式、`*_cap` 适用性、wave 产物命名），已推送。
 - `pre-fix-20261023-1018-D25`（`bc6328f`）：D25-D33 修复前备份（代码同 v1.1.5），已推送。
+- `v1.1.6`（`f3f4549`）：D25-D33 修复（formal 超时进程树清理、清理失败 ERROR+HINT、数值型 formal 策略、配置保持、TB 调用纪律、缩进、negative 触发、depth 语义、变异归档、优化等价 recipe），已推送。
 - 流程：确认问题点后先把当前状态打 tag 并 push，再执行修改；修复复验通过后打版本 tag 并 push。
+
+## 最终结论（2026-10-23）
+
+连续 3 个独立 demo（`uart_tx` v1.1.3、`rr_arbiter` v1.1.4、`pwm_gen` v1.1.5）
+均按 A1-A12 通过，streak = 3/3；v1.1.5 发现的 D25（P2）与 D26-D33（P3）
+已由 v1.1.6 修复并通过评审独立复验。截至 `v1.1.6`（`f3f4549`），无未修复
+P1/P2，**验收通过**。
