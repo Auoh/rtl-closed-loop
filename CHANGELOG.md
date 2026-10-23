@@ -2,6 +2,16 @@
 
 rtl-closed-loop 技能的版本变更记录。版本号遵循语义化版本（SemVer）。
 
+## [v1.1.1] - 2026-10-23
+
+### Fixed
+
+- `setup.ps1 -Install/-Bundle`：源与目标相同（缓存根已在 PATH 上）时会先删除
+  目标再对同一路径 robocopy，导致工具链被清空。现在删除前先做
+  `GetFullPath` 大小写不敏感比较，相同则跳过并打印提示。
+- `setup.ps1` 部署 iverilog 前校验源目录包含 `bin\iverilog.exe`，源无效时
+  直接退出，不再删除目标。
+
 ## [v1.1.0] - 2026-10-23
 
 ### Added

@@ -35,7 +35,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
-VERSION = "1.1.0"
+VERSION = "1.1.1"
 SKILL_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_POLICY: Dict[str, Any] = {
     "lint": {

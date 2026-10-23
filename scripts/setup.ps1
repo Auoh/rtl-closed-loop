@@ -221,6 +221,9 @@ if (-not $src) {
 if (-not $src -or -not (Test-Path -LiteralPath $src)) {
     Write-Host "未找到来源安装，请用 -Source 指定"; exit 1
 }
+if (-not (Test-Path -LiteralPath (Join-Path $src 'bin\iverilog.exe'))) {
+    Write-Host "[WARN] 来源不是有效的 iverilog（缺少 bin\iverilog.exe）: $src"; exit 1
+}
 
 if ($Install) {
     $dest = $Target
@@ -234,20 +237,27 @@ Write-Host "== 部署便携工具链: $src  ->  $dest =="
 $sz = (Get-ChildItem -LiteralPath $src -Recurse -File | Measure-Object Length -Sum).Sum
 Write-Host ("  源大小: {0:N1} MB" -f ($sz / 1MB))
 
-if (Test-Path -LiteralPath $dest) {
-    $item = Get-Item -LiteralPath $dest
-    if ($item.LinkType) {
-        Write-Host "  移除旧 junction/symlink（仅删链接本身）"
-        $item.Delete()
-    } else {
-        Write-Host "  目标已存在，先删除"
-        Remove-Item -LiteralPath $dest -Recurse -Force
+$sf = [System.IO.Path]::GetFullPath($src).TrimEnd('\')
+$df = [System.IO.Path]::GetFullPath($dest).TrimEnd('\')
+if ($sf -ieq $df) {
+    # 源与目标相同（如缓存根已有工具链且 PATH 解析到它）：不能先删再拷。
+    Write-Host "  源与目标相同，跳过 iverilog 部署: $dest"
+} else {
+    if (Test-Path -LiteralPath $dest) {
+        $item = Get-Item -LiteralPath $dest
+        if ($item.LinkType) {
+            Write-Host "  移除旧 junction/symlink（仅删链接本身）"
+            $item.Delete()
+        } else {
+            Write-Host "  目标已存在，先删除"
+            Remove-Item -LiteralPath $dest -Recurse -Force
+        }
     }
+    New-Item -ItemType Directory -Path $dest | Out-Null
+    Write-Host "  拷贝中..."
+    robocopy $src $dest /E /NFL /NDL /NJH /NJS | Out-Null
+    if ($LASTEXITCODE -ge 8) { Write-Host "robocopy 失败"; exit 1 }
 }
-New-Item -ItemType Directory -Path $dest | Out-Null
-Write-Host "  拷贝中..."
-robocopy $src $dest /E /NFL /NDL /NJH /NJS | Out-Null
-if ($LASTEXITCODE -ge 8) { Write-Host "robocopy 失败"; exit 1 }
 Write-Host ("  完成: {0:N1} MB 已就位。" -f ((Get-ChildItem -LiteralPath $dest -Recurse -File | Measure-Object Length -Sum).Sum / 1MB))
 
 # quality-lite（Yosys/slang/sby）一并部署：-Install 放缓存根同级，-Bundle 放工作区 tools
