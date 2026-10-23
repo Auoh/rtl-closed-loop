@@ -383,3 +383,35 @@ DUT 会 0 报错、打印 PASS。
 4. 预算门禁逻辑保持不变。
 
 **状态**：2026-10-23 22:57 已发 rtl-expert-54，待修复。
+
+### D34/D35 独立复验（2026-10-23 23:05，通过）
+
+用 `git archive 4ac9d78` 导出的只读副本独立复跑，不采信 peer 工作区产物。
+
+**D34（T1）**
+- 模板：`references/templates/testplan.md` 含主表 7 列、6 类固定类别、5 种载体
+  命名、10 项完备性勾选、结果回填与评审结论。
+- 流程：`workflow.md:16-34` §2.5 固定“规格条目 → 测试点 → 完备性检查 →
+  用例设计 → 执行”，最低完备性 4 条；`SKILL.md:56-62` 插入第 3 步；
+  `workflow.md:158-159` 与 SKILL 交付清单加入 `docs\testplan_<module>.md`。
+- demo `d34-fifo`：在全新副本 `verify-d34/fifo` 跑
+  `rtlq.py all --top sync_fifo` → **PASS rc0**：lint 0/0；sim checks=1050
+  errors=0；negative expected=FAIL actual=FAIL；synth 97/39/6；lec 51/0；
+  formal DONE (PASS)。与 peer 上报数字一致。
+- 追溯：spec R1-R11、边界 B1-B11；testplan 21 行、21 个唯一 TP；每条需求 ≥1 点，
+  每个点均有载体与结果；B1-B11 全部被引用（最少 2 次）。载体可定位：TB
+  `DIRECTED_BEGIN` 下 B1-B11 注释齐全；formal P1-P10 断言存在；
+  `NEG:full_guard` 注入点在 RTL `ifdef INJECT_BUG` 内，`sim_bug` 在 B4
+  报 count/full/dout 失配；随机段种子 `32'h1234_5678`、1000 拍，日志统计
+  full=141 empty=115 wr_full=70 rd_empty=60 simul=222，与 TP11.2 一致。
+
+**D35（T2）**
+- `toolchain.md:243-292` 新增「比对与时序：保证与不保证」，V1-V6 表与实测一致
+  （V2 为 23/44），5 条保证 + 不保证清单 + 手写 TB 复核方法。
+- `workflow.md:38` 硬性检查项、`SKILL.md:93` 硬性约束均已加入。
+- `scripts/gen_tb.py:203` 仍是唯一比较点且用 `!==`；无单 `!=`。
+- 复跑 V1-V6：22/0 PASS、22/44 FAIL、22/44 FAIL、22/0 PASS（`!=` 漏 X）、
+  23/44 FAIL、22/18 FAIL，与文档逐项吻合。
+
+**版本**：`v1.1.7`（annotated `562f9ea`）指向 `77e30e2`，已推送；remote main
+`1ca0c89`。D36（PPA 版本校验）仍在 peer 工作区进行，未验收。
