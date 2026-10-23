@@ -21,13 +21,14 @@ lint、PPA 预算、LEC、formal、快照对比、优化迭代、交付、文档
 |---|---|
 | streak | 0 / 3 |
 | demo 1 `uart_tx`（v1.1.1） | FAIL（A7、A12；其余 10 项通过） |
-| demo 1 `uart_tx`（v1.1.2 重跑） | 进行中，要求 `lec.blacklist` 为空 |
+| demo 1 `uart_tx`（v1.1.2 重跑） | FAIL（仅 A12；A1-A11 全过，空 blacklist 下 LEC 21/0） |
+| demo 1 `uart_tx`（v1.1.3 重跑） | 待启动 |
 | demo 2 `rr_arbiter` | 未开始 |
 | demo 3 `pwm_gen` | 未开始 |
 
-demo 1 关键数据：sim `checks=4478 errors=0`；`--bug` rc=1（errors=1344）；
-PPA 优化 79/18/9 → 54/15/6；LEC unproven=0；formal `abc pdr` 全部 proved。
-判 FAIL 的两点见 D7（LEC 黑名单）与 D4/D5（阻塞级缺口）。
+demo 1 关键数据（v1.1.2 重跑）：sim `checks=4000 errors=0`；`--bug` rc=1（errors=1440）；
+PPA 优化 73/19/6 → 70/18/6；LEC `blacklist=[]`、proven=21；compare rc 0。
+A12 未过的原因见 D8/D14（formal harness 与 LEC-FSM 文档缺口，已由 v1.1.3 补齐）。
 
 ## 已修复
 
@@ -39,6 +40,14 @@ PPA 优化 79/18/9 → 54/15/6；LEC unproven=0；formal `abc pdr` 全部 proved
 | D4 | P1 | `scripts/rtlq.py` | `_find_iverilog` 不识别 `<root>/iverilog/bin`，回退到含空格 PATH 后 sim 失败（rc=255） | `dd3a5a1`：支持两种缓存布局；doctor 对含空格路径告警；sim 命令解析失败时自动改用缓存工具重试 |
 | D5 | P1 | `scripts/rtlq.py` | quality-lite 无 `yosys-smtbmc`，sby 默认引擎必然 ERROR | `dd3a5a1`：运行前校验 `[engines]`；缺失或 smtbmc 时 ERROR 并提示 `[engines] abc pdr` |
 | D6 | P3 | 多处 | 文档示例越界、头注释路径错、`-Top`/`--top` 不一致、日志路径不符、`-NoGui` 未提及、gen_tb 重生成丢状态、config 无字段说明 | `dd3a5a1`：示例移入 `references/examples/`；文档统一 `--top` 与 `report/logs/sim_<top>.log`；gen_tb 新增 `REF_DECLS_BEGIN/END` 保留区 |
+| D7 | P2 | demo 侧 | 首轮 demo 自设 LEC 黑名单 | 重跑时 `blacklist=[]` 通过（21/0），非技能缺陷 |
+| D8 | P2 | `references/examples/formal/` | sby prove 的 anyinit/复位假设写法无文档、无模板 | `be2c8f7`：新增 `demo_ctr` 全套模板（rtl/sby/fv/README），说明 `formalff -ff2anyinit` 与复位保持 |
+| D9 | P2 | `references/coding_style.md:130` | TB 激励规范与 `toolchain.md` 矛盾（沿后 `#1` vs NBA 零延时） | `be2c8f7`：统一为 NBA 零延时，`#1` 列为反例 |
+| D10 | P2 | `scripts/rtlq.py` | `formal.engines` 只保留首 token（`abc pdr` → `["abc"]`） | `be2c8f7`：保留整行 |
+| D11 | P3 | quality-lite | 无 `yosys-witness`，失败无可读轨迹 | `be2c8f7`：文档说明限制与替代调试路径（logfile、`mode bmc` + `abc bmc3`、定向仿真） |
+| D12 | P3 | `rtlq.py all` | `all` 退出码不反映内嵌 Baseline vs Current 的 PPA 回退 | `be2c8f7`：新增 `--fail-on-regression`，默认行为不变 |
+| D13 | P3 | `toolchain.md` | sby `[files]` 相对基准不明确 | `be2c8f7`：明确相对 `-W` 工作区，并写入模板注释 |
+| D14 | P2 | `coding_style.md §13` | 空黑名单下 FSM 的 LEC 写法无指导 | `be2c8f7`：`fsm_encoding="none"` + 全分支显式次态 |
 
 D4 复验证据（v1.1.2，我的独立复现）：
 - 无 `RTL_TOOLCHAIN`、工作区无 `tools/`：`doctor` rc 0，iverilog 指向 `C:\rtl-toolchain\iverilog\bin`；`sim` rc 0，`checks=4478 errors=0`。
@@ -52,11 +61,15 @@ D1 复验证据：缓存根已存在时重复 `-Install` → rc 0、打印「源
 1231 文件/87MB 前后不变；无效源 → rc 1、缓存不变；`doctor` 11 项 OK；
 离线包内 `setup.ps1` 含同样守卫，`VERSION = "1.1.1"`。
 
+D8-D14 复验证据（v1.1.3，我的独立复现）：
+- D8/D10：清空临时工作区，按模板原样跑 `formal demo_ctr` → rc 0 `DONE (PASS)`，`report/formal.json` 的 `engines` 为 `["abc pdr"]`。
+- D14：把交付版 `ch_num_gen.v` 复制到临时工作区、清空 blacklist → 2 个 `state_next` unproven；按 §13 加 `fsm_encoding="none"` 并把每个分支（含保持）显式赋值后 → `proven=34 unproven=0`。
+- D12：`reg_adder` 临时副本加 1 位 keep 寄存器（48 cells/10 ff，预算内）：默认 `all` rc 0 但内嵌基线显示 `FAIL (cells, ff)`；加 `--fail-on-regression` → rc 1、`quality.json status=FAIL`。
+- D9/D11/D13：`coding_style.md` 已无「沿后 #1」；`toolchain.md:57/68` 与 README 写明无 `yosys-witness`、`[files]` 相对 `-W` 工作区。
+
 ## 待修复
 
-| ID | 级别 | 位置 | 问题 |
-|---|---|---|---|
-| D7 | P2 | demo 侧 | demo 1 在 `quality_policy.json` 设 `lec.blacklist.default=["state_next"]`；清空后 `proven=19 unproven=0`，属多余掩盖项，验收按不通过处理，需重跑 |
+无。当前所有已确认缺陷均已修复并由评审独立复验。
 
 D4/D5 原始复现命令（已修复，保留供回归）：
 
@@ -76,4 +89,5 @@ rtlq.py sim -W <workspace> --top uart_tx     # 不设 RTL_TOOLCHAIN
 - `v1.1.0`（`7d791e8`）：D1 修复前的备份基线，已推送。
 - `v1.1.1`（`51c1ac3`）：D1 修复，已推送；远端 annotated tag `6b9b08e`。
 - `v1.1.2`（`dd3a5a1`）：D4/D5/D6 修复 + README，已推送。
+- `v1.1.3`（`be2c8f7`）：D8-D14 修复（formal 模板、FSM/LEC 文档、engines 字段、回归门禁），已推送。
 - 流程：确认问题点后先把当前状态打 tag 并 push，再执行修改；修复复验通过后打版本 tag 并 push。
