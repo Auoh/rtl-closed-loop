@@ -350,3 +350,36 @@ DUT 会 0 报错、打印 PASS。
    强检查误报率高），本轮不要求。
 
 **状态**：2026-10-23 22:55 已发 rtl-expert-54，待修复。
+
+### D36（P2）PPA 跨版本比较无校验，synth 快照不记录工具版本（T3）
+
+**现象**：`compare` 只比较阶段状态与 cells/ff/depth，从不检查两个快照的 Yosys
+版本；跨版本比较静默 PASS，把工具差异当成设计 delta。`synth` 快照本身也不含
+工具版本。
+
+**实验**（`D:/tmp/rtl-acceptance/t3-ppa`，pwm_gen）：
+- 同版本连跑三次 `synth`：cells=109 ff=8 depth=11 三次一致；`stat -json` 与
+  `ltp -noff` 输出逐字节相同（sha256 相同）。
+- `all` 快照 `20261023_225456_793841.json` 含 `tools.yosys = Yosys 0.66 ...`；
+  复制后篡改 `tools.yosys = "Yosys 0.9 (FAKE)"`，再
+  `rtlq.py compare --baseline baseline_fake_version.json`：
+  六阶段全 `same`、delta 全 0、`RESULT: PASS`、rc=0，**无任何版本提示**。
+
+**代码证据**：
+- `scripts/rtlq.py:1622-1705` `_compare_snapshots` 不读 `tools`。
+- `scripts/rtlq.py:1532-1545` `_snapshot_payload` 不透传版本；只有
+  `rtlq.py:1862` 的 `all` 结果带 `tools: ctx.versions()`，`synth` 快照没有。
+- `scripts/rtlq.py:1071-1139` 综合脚本与指标定义。
+
+**期望**：
+1. `_snapshot_payload` 对所有命令统一写入 `tools: ctx.versions()`（至少 yosys；
+   建议 yosys/slang/iverilog），旧快照缺该字段时视为“不可判定”而非报错。
+2. `_compare_snapshots` 增加版本比对：两边都有 `tools.yosys` 且规范化首行不同时，
+   返回 `tool_mismatch` 字段并在 CLI 打印警告；默认状态 `WARN`（rc 0，不破坏现有
+   流水线），新增 `--fail-on-tool-mismatch` 时置 `FAIL`；输出中带上两边版本。
+3. `references/toolchain.md` 增加「PPA 语义与可比性」：cells/ff/depth 的定义
+   （generic 映射、depth 不含 FF 与线延迟）、同版本同脚本同 RTL 的确定性实测、
+   跨版本/跨工艺不可比、不是签核 STA。
+4. 预算门禁逻辑保持不变。
+
+**状态**：2026-10-23 22:57 已发 rtl-expert-54，待修复。
