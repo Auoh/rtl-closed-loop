@@ -415,3 +415,49 @@ DUT 会 0 报错、打印 PASS。
 
 **版本**：`v1.1.7`（annotated `562f9ea`）指向 `77e30e2`，已推送；remote main
 `1ca0c89`。D36（PPA 版本校验）仍在 peer 工作区进行，未验收。
+
+### D36 独立复验（2026-10-23 23:10，通过）+ D37（P3）
+
+用 `git archive 2d0fe2a` 的只读副本在全新工作区复验，不采信 peer 产物。
+
+| 验收点 | 命令 | 结果 |
+|---|---|---|
+| 快照含 tools | `synth` ×2 | 两个快照均含 iverilog/yosys/slang/verible/python |
+| 字节确定性 | 连续 2 次 synth | stat sha `42a4bbcb…`、ltp sha `c7725b13…`，与 v1.1.7 前一致 |
+| 同版本 compare | 默认 | `RESULT: PASS`，rc0，无 WARN |
+| 版本不一致（默认） | `compare --baseline fake` | `RESULT: WARN (tool_version)`，rc0，打印两边版本 |
+| 版本不一致（严格） | 同上 + `--fail-on-tool-mismatch` | `RESULT: FAIL (tool_version)`，**rc1** |
+| 旧快照无 tools | `--baseline old` | 「不可判定（旧快照缺 tools）」，`RESULT: PASS`，rc0 |
+| all 默认 | `all --baseline fake` | `PASS` rc0，内嵌 compare `WARN` + 告警行 |
+| all + fail-on-regression | 同上 | `PASS` rc0（WARN 不再误伤） |
+| all + fail-on-tool-mismatch | 同上 | `FAIL (tool_version)`，rc1 |
+| 真回归仍被拦截 | 基线 cells=50 | `FAIL (cells)`，rc1 |
+| 回归 | pwm_gen / sync_fifo / rr_arbiter | 全部 rc0：1666/0 109/8/11、1050/0 97/39/6、534/0 30/2/10，LEC 9/0、51/0、11/0，formal 全 PASS |
+| 文档 | `toolchain.md:282-323` | PPA 指标定义、字节确定性、版本记录/比对、不可比场景齐全 |
+
+**补充语义校准**（`t3-semantics/`，已知结构 RTL）：`ff_test`（3×8bit 流水）
+24/24/0；`depth_test`（5 级组合链）7/0/6；`mixed_test`（计数器+比较树）27/8/7。
+证明 `ff` 精确、depth 不含 FF；且 depth 是全设计最长组合路径（mixed 的 7 级来自
+`cnt+1` 加法链、终点为 `cnt[7]` 的 D 端），不只是输出端口逻辑。
+
+### D37（P3）严格模式下仍打印 `[WARN] ... 默认 WARN`，与实际 FAIL 矛盾
+
+**复现**：
+```
+rtlq.py compare -W <ws> --top pwm_gen --baseline fake.json --fail-on-tool-mismatch
+→ RESULT: FAIL (regressions: tool_version)   （但上文打印 [WARN] ... 默认 WARN）
+rtlq.py all ... --fail-on-tool-mismatch
+→ == rtlq all: FAIL ==                        （但打印 [WARN] ... 默认 WARN）
+rtlq.py synth ... --fail-on-tool-mismatch
+→ [PASS] synth ... 后打印 [WARN] ...，退出码 1
+```
+**位置**：`scripts/rtlq.py` 的 `cmd_synth`（约 1160-1166）、`cmd_all`（约
+2024-2029）、`cmd_compare`（约 2056-2061）无条件打印 `[WARN]` 文案。
+**期望**：按实际模式输出（严格模式 `[FAIL] tool version mismatch`，默认
+`[WARN]`），或统一用中性 `[TOOL]`；`synth` 在严格门禁触发时补一行
+`RESULT: FAIL (tool_version)`，避免 `[PASS]` 与 rc1 并存的歧义。
+**级别**：P3（判定与退出码正确，仅提示文案误导）。
+**状态**：2026-10-23 23:12 已发 rtl-expert-54。
+
+**版本**：`v1.1.8`（annotated `51d524e`）指向 `2d0fe2a`，已推送；remote main
+`2d0fe2a`。
