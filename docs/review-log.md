@@ -22,13 +22,23 @@ lint、PPA 预算、LEC、formal、快照对比、优化迭代、交付、文档
 | streak | 0 / 3 |
 | demo 1 `uart_tx`（v1.1.1） | FAIL（A7、A12；其余 10 项通过） |
 | demo 1 `uart_tx`（v1.1.2 重跑） | FAIL（仅 A12；A1-A11 全过，空 blacklist 下 LEC 21/0） |
-| demo 1 `uart_tx`（v1.1.3 重跑） | 待启动 |
+| demo 1 `uart_tx`（v1.1.3 重跑） | **PASS**（A1-A12 全过；streak 1/3） |
 | demo 2 `rr_arbiter` | 未开始 |
 | demo 3 `pwm_gen` | 未开始 |
 
 demo 1 关键数据（v1.1.2 重跑）：sim `checks=4000 errors=0`；`--bug` rc=1（errors=1440）；
 PPA 优化 73/19/6 → 70/18/6；LEC `blacklist=[]`、proven=21；compare rc 0。
 A12 未过的原因见 D8/D14（formal harness 与 LEC-FSM 文档缺口，已由 v1.1.3 补齐）。
+
+demo 1 关键数据（v1.1.3 重跑，评审独立复跑）：全新工作区、未设环境变量；
+`all` rc=0，sim `checks=4000 errors=0`，`--bug` rc=1（384 errors）；
+PPA 63/18/5（预算 320/40/25）；LEC `blacklist=[]` proven=21 unproven=0；
+formal `DONE (PASS)`、`engines=["abc pdr"]`；compare rc=0（70/18/8 → 63/18/5）。
+评审额外核验：TB 能捕获位序反转（1761 errors）与 busy 提前释放（384 errors）；
+形式化对「stop 位恒低」注入返回 FAIL，对恒假断言返回 FAIL（证明非空证明）；
+用 `docs/uart_tx_baseline.v` 独立综合复现基线 70/18/8。
+**A12 通过**：`gap_log.md` 无阻塞级缺口；其中 G5「R7 与 §13 冲突」经复核为误报
+（`coding_style.md:192-194` 已明确 §13 优先）。
 
 ## 已修复
 
@@ -67,9 +77,27 @@ D8-D14 复验证据（v1.1.3，我的独立复现）：
 - D12：`reg_adder` 临时副本加 1 位 keep 寄存器（48 cells/10 ff，预算内）：默认 `all` rc 0 但内嵌基线显示 `FAIL (cells, ff)`；加 `--fail-on-regression` → rc 1、`quality.json status=FAIL`。
 - D9/D11/D13：`coding_style.md` 已无「沿后 #1」；`toolchain.md:57/68` 与 README 写明无 `yosys-witness`、`[files]` 相对 `-W` 工作区。
 
-## 待修复
+## 待修复（v1.1.3 重跑中新发现，2026-10-23）
 
-无。当前所有已确认缺陷均已修复并由评审独立复验。
+| ID | 级别 | 位置 | 问题 | 期望修复 |
+|---|---|---|---|---|
+| D15 | P2 | `scripts/rtlq.py:56` | `DEFAULT_POLICY` 的 `lec.blacklist.default = ["state_next"]`：用户未创建 `config/quality_policy.json` 时，LEC 静默排除 `state_next`，可能把真实 unproven 掩盖成 PASS | 默认改为 `[]`；仅在用户显式配置时排除。若确有工具重编码场景，可在 unproven 仅剩 `state_next` 时打印 HINT（指向 `coding_style.md §13`），但不得自动排除 |
+| D16 | P3 | `scripts/gen_tb.py:12` | 模块 docstring 写「正沿采样、负沿驱动」，与生成代码（上升沿 NBA 驱动、负沿检查）及生成文件头注释矛盾 | 改为「上升沿 NBA 驱动、负沿检查」 |
+| D17 | P3 | `references/workflow.md:18-20`、`references/toolchain.md:126-131` | 只说明跨拍状态放 `REF_DECLS`，未说明需要 `initial` 初始化；生成的 `ref_*` 默认为 X，首次比较会传播 X | 文档补充「REF_DECLS 状态需在 `initial` 中赋初值」，并给 3 行示例 |
+| D18 | P3 | `scripts/format.ps1:42,49,57,60` | 调用裸 `python`，未复用 `rtlq.py` 的解释器探测；`python` 为 Store 桩时格式化直接失败 | 采用与 `rtlq.py` 相同的解释器探测（`py -3`/`python3` 回退） |
+| D19 | P3 | `references/examples/formal/` | 仅有计数器模板，无协议级多周期属性示例（影子计数器/位边界），本次只能自行设计 | 增加一个「单拍脉冲 + 多拍输出」的最小协议模板（DUT + sby + fv），说明影子计数器写法 |
+| D20 | P3 | `scripts/gen_tb.py:88-90,216-225` | 生成的主循环会覆盖手工定向激励，且无保留区；规格要求补充定向边界用例时无处安放 | 在生成模板中增加 `DIRECTED_BEGIN/END` 保留区（或保留的 `initial` 段），文档同步说明 |
+
+复现证据（D15，评审独立复现）：同一份 `ch_num_gen.v`：
+- 空 blacklist：`rtlq.py lec` → rc=1，`Found a total of 2 unproven $equiv cells`；
+- 删除 `config/quality_policy.json`（走默认）：rc=0，`[PASS] proven=32 unproven=0`，
+  `report/logs/lec_blacklist_ch_num_gen.txt` 为 `state_next`。
+
+误报排除（本轮复核后不成立，不修）：
+- G5「`coding_style.md` 第 5 节 `else ;` 与第 13 节显式保持冲突」：同文件 192-194 行
+  已明确 §13 对 F2 `state_next` 优先，属阅读顺序问题。
+- G6「`--bug` 只有一个 `INJECT_BUG` 宏、无法选择注入点」：技能契约只要求负向演练
+  至少一次并可检出；多注入点属增强需求，不是缺陷。
 
 D4/D5 原始复现命令（已修复，保留供回归）：
 
