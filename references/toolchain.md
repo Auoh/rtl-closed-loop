@@ -96,7 +96,7 @@
 | `synth.timeout_s` | `300` | Yosys 综合超时 |
 | `lec.timeout_s` | `300` | LEC 超时 |
 | `lec.multiclock` | `true` | 是否传 `equiv_opt -multiclock` |
-| `lec.blacklist` | `{"default": ["state_next"]}` | 不参与等价性证明的信号；支持 `{"default": [...], "<module>": [...]}` |
+| `lec.blacklist` | `{"default": []}` | 不参与等价性证明的信号；支持 `{"default": [...], "<module>": [...]}`。默认为空，避免静默掩盖真实 unproven；仅按模块显式 opt-in |
 | `formal.timeout_s` | `180` | sby 超时 |
 | `formal.python` | `"auto"` | 运行 sby 的解释器；`auto` 在 Windows 优先 `py -3.12`，也可写 `"python3"`/完整命令 |
 | `all.negative` | `true` | `all` 是否执行缺陷注入阶段 |
@@ -122,12 +122,29 @@
 - `outputs`：`[{name, width}]`
 - `cycles`：随机周期数；`seed`：随机种子
 
-注意：重新生成 TB 只保留两处人工内容：
+注意：重新生成 TB 保留三处人工内容：
 1. `task reference_model` 内部的逻辑；
-2. `// ==== REF_DECLS_BEGIN ====` 与 `// ==== REF_DECLS_END ====` 之间的声明。
+2. `// ==== REF_DECLS_BEGIN ====` 与 `// ==== REF_DECLS_END ====` 之间的声明；
+3. `// ==== DIRECTED_BEGIN ====` 与 `// ==== DIRECTED_END ====` 之间的定向激励。
 
-其他手工代码（task/function、定向激励序列、TOP 层额外逻辑）会被模板覆盖，需自行
-备份。跨拍状态请在 `REF_DECLS` 区声明，并在 `reference_model` 任务内更新；
+其他手工代码（task/function、TOP 层额外逻辑）会被模板覆盖，需自行备份。跨拍状态
+请在 `REF_DECLS` 区声明，并在 `reference_model` 任务内更新。`REF_DECLS` 区的
+`ref_*` 必须用 `initial` 赋初值，否则 X 会进入首次比较；例如：
+```verilog
+initial begin
+    ref_cnt  = 0;
+    ref_busy = 1'b0;
+end
+```
+定向激励写在 `DIRECTED` 区（`do_reset` 之后、随机循环之前）。上沿 NBA 驱动的值
+要到下一拍才被 DUT 采样，因此检查上一拍要再等一个上沿：
+
+```verilog
+@(posedge clk); a <= 8'h12; b <= 8'h34;
+@(posedge clk); a <= 8'h00; b <= 8'hff;            // 下一组定向值
+@(negedge clk); reference_model; check_outputs;    // 检查上一拍 0x12+0x34
+```
+
 生成后仍要人工确认参考模型与接口一致（位宽、时序）。
 
 

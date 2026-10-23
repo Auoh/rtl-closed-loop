@@ -15,7 +15,14 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot\rtl-tools.ps1"
-$py = Join-Path $PSScriptRoot 'format_check.py'
+$pyScript = Join-Path $PSScriptRoot 'format_check.py'
+$pyInfo = Find-RtlPython
+if (-not $pyInfo) {
+    Write-Host '[MISS] Python 3.8+ not found (tried python/python3/py -3.12/py -3)'
+    exit 3
+}
+$pyExe = $pyInfo.Exe
+$pyPre = $pyInfo.Pre
 
 if (-not $File) {
     if (-not $Top) {
@@ -39,14 +46,14 @@ if ($Report) {
 }
 
 if (-not $Fix) {
-    python $py -f $File @reportArgs
+    & $pyExe @pyPre $pyScript -f $File @reportArgs
     exit $LASTEXITCODE
 }
 
 $fmt = Find-RtlTool 'verible-verilog-format.exe' $W
 if (-not $fmt) {
     Write-Host "[WARN] 未找到 verible-verilog-format，仅应用安全规范修复（R5/R7）"
-    python $py --fix -f $File @reportArgs
+    & $pyExe @pyPre $pyScript --fix -f $File @reportArgs
     exit $LASTEXITCODE
 }
 $flags = @('--indentation_spaces=4', '--wrap_end_else_clauses', '--inplace')
@@ -54,8 +61,8 @@ $flags = @('--indentation_spaces=4', '--wrap_end_else_clauses', '--inplace')
 Write-Host "verible : $fmt"
 & $fmt @flags $File
 if ($LASTEXITCODE -ne 0) { Write-Host "[ERR] verible 格式化失败"; exit $LASTEXITCODE }
-python $py --fix -f $File
+& $pyExe @pyPre $pyScript --fix -f $File
 & $fmt @flags $File        # 第二次：规则修复后重新对齐
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-python $py -f $File @reportArgs
+& $pyExe @pyPre $pyScript -f $File @reportArgs
 exit $LASTEXITCODE

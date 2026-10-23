@@ -9,10 +9,11 @@
 生成内容:
   - 时钟 / 复位生成
   - DUT 例化（支持参数）
-  - 随机激励（正沿采样、负沿驱动，1bit 输入可配概率）
-  - 输入正沿捕获，供参考模型使用
+  - 随机激励（上升沿 NBA 驱动、负沿检查，1bit 输入可配概率）
+  - 输入上升沿捕获（*_cap），供参考模型使用
   - reference_model 期望逻辑桩（主要人工填写位置）
   - REF_DECLS_BEGIN/END 声明区（跨拍状态/辅助变量，重新生成时保留）
+  - DIRECTED_BEGIN/END 定向激励区（重新生成时保留）
   - 自动输出比对 + 统计 + PASS/FAIL
 
 JSON 字段:
@@ -59,6 +60,7 @@ def gen(spec_path, out_path):
     out_path = out_path or (TB_DIR / ("tb_" + mod + ".v"))
     old_ref = None
     old_decls = None
+    old_directed = None
     if out_path.exists():
         old_text = out_path.read_text(encoding="utf-8")
         m = re.search(r"task reference_model;\s*begin(.*?)end\s*endtask", old_text, re.S)
@@ -68,6 +70,10 @@ def gen(spec_path, out_path):
                       old_text, re.S)
         if m:
             old_decls = m.group(1).strip("\n")
+        m = re.search(r"// ==== DIRECTED_BEGIN ====(.*?)// ==== DIRECTED_END ====",
+                      old_text, re.S)
+        if m:
+            old_directed = m.group(1).strip("\n")
     clk = spec.get("clock", "clk")
     period = spec.get("clock_period_ns", 10)
     rst = spec.get("reset", {"name": "rst_n", "active_low": True, "assert_cycles": 4})
@@ -85,9 +91,9 @@ def gen(spec_path, out_path):
     L = []
     a = L.append
     a("// 由 scripts/gen_tb.py 自动生成，请勿手改本头；修改接口后重新生成。")
-    a("// 重新生成保留: task reference_model 内部逻辑 + REF_DECLS_BEGIN/END 之间的声明。")
-    a("// 其他手工代码（task/function、定向激励序列）会被模板覆盖，请自行备份。")
-    a("// 人工填写位置: task reference_model（期望输出）；跨拍状态在 REF_DECLS 区声明。")
+    a("// 重新生成保留: reference_model 内部逻辑 + REF_DECLS_BEGIN/END 声明 + DIRECTED_BEGIN/END 定向激励。")
+    a("// 其他手工代码（task/function、TOP 层额外逻辑）会被模板覆盖，请自行备份。")
+    a("// 人工填写位置: reference_model（期望输出）；跨拍状态在 REF_DECLS 区声明并 initial 赋初值。")
     a("// 时序约定: 激励在上升沿用 NBA 驱动（零延时），DUT 上升沿采样沿前值；")
     a("//           参考模型使用 *_cap（上升沿捕获的采样值），检查在负沿执行，无 #1 延时。")
     a("`timescale 1ns/1ps")
@@ -209,6 +215,17 @@ def gen(spec_path, out_path):
         a("        seed = %d;" % seed)
     a("        $display(\"=== TB start: %s, CYCLES=%%0d ===\", CYCLES);" % mod)
     a("        do_reset;")
+    a("")
+    a("        // ==== DIRECTED_BEGIN ====")
+    if old_directed is None:
+        a("        // 定向边界激励写在这里（重新生成时保留）；例如：")
+        a("        // @(posedge clk); a <= 8'h12; b <= 8'h34;")
+        a("        // @(posedge clk); a <= 8'h00; b <= 8'hff;")
+        a("        // @(negedge clk); reference_model; check_outputs;  // 检查上一拍")
+    elif old_directed:
+        for line in old_directed.splitlines():
+            a(line)
+    a("        // ==== DIRECTED_END ====")
     a("")
     a("        for (i = 0; i < CYCLES; i = i + 1) begin")
     a("            @(posedge %s);            // DUT 在本沿采样（读到上一拍驱动值）" % clk)

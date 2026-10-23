@@ -15,12 +15,22 @@
 
 ## 3. 测试环境
 - 接口 JSON → `gen_tb.py` 生成骨架（示例：技能 `references\examples\iface_reg_adder.json`）
-- 重新生成只保留 `reference_model` 任务内部逻辑与 `REF_DECLS_BEGIN/END` 之间的声明；
-  其他手工代码会被覆盖。跨拍状态请在 `REF_DECLS` 区声明，并在参考模型任务内更新
+- 重新生成只保留 `reference_model` 任务内部逻辑、`REF_DECLS_BEGIN/END` 声明和
+  `DIRECTED_BEGIN/END` 定向激励区；其他手工代码会被覆盖。跨拍状态请在 `REF_DECLS`
+  区声明，并在参考模型任务内更新
+- `REF_DECLS` 区的 `ref_*` 必须用 `initial` 赋初值（否则 X 会在首次比较中传播）；
+  参考模型的复位分支也要覆盖这些状态：
+  ```verilog
+  initial begin
+      ref_cnt = 0;
+      ref_busy = 1'b0;
+  end
+  ```
 - 参考模型要点：
   - 独立计数/独立状态判定，不依赖 DUT 输出（避免循环论证）
   - 期望值按需求语义编写，注意位宽加宽
-- 补充定向边界用例：满/空/溢出/下溢/首读顺序/复位后行为
+- 补充定向边界用例：满/空/溢出/下溢/首读顺序/复位后行为；写在
+  `DIRECTED_BEGIN/END` 区，重新生成时保留
 
 ## 4. 回归判定
 - 输出 `RESULT: PASS` 且退出码 0 才算通过

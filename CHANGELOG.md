@@ -2,6 +2,36 @@
 
 rtl-closed-loop 技能的版本变更记录。版本号遵循语义化版本（SemVer）。
 
+## [v1.1.4] - 2026-10-23
+
+### Fixed
+
+- LEC 默认 blacklist 改为空：`DEFAULT_POLICY["lec"]["blacklist"]["default"]`
+  原为 `["state_next"]`，未创建 `config/quality_policy.json` 时会静默排除
+  `state_next`，把真实 unproven 掩盖成 PASS。现在默认不排除任何信号；项目仍可
+  在配置中按模块显式 opt-in。当 unproven 仅剩 `state_next` 且 blacklist 为空时，
+  `lec` / `all` 打印 `[HINT]` 指向 `coding_style.md` §13，但绝不自动排除；
+  JSON 增加 `unproven_signals` 便于脚本判断。
+- `gen_tb.py` 模块 docstring 的时序说明改为「上升沿 NBA 驱动、负沿检查」，
+  与生成代码和生成文件头注释一致。
+- `format.ps1` 不再裸调用 `python`：复用 `rtl-tools.ps1` 新增的
+  `Find-RtlPython`（依次探测 `python`/`python3`/`py -3.12`/`py -3`，跳过
+  Windows Store 桩），与 `rtlq.py` 的解释器探测行为一致；`run.ps1`、
+  `wave.ps1` 的同类调用也一并复用该探测。
+
+### Added
+
+- `references/examples/formal/` 新增协议级多周期模板：`pulse_stretch`
+  （单拍 `req` 拉伸为固定 `LATENCY` 拍 `busy`，`done` 在最后一拍）+
+  `pulse_stretch.sby` + `pulse_stretch_fv.sv`。wrapper 用独立影子计数器
+  `shadow` 和 `past_*` 历史寄存器检查起拍、早退、边界释放、`done` 位置；
+  README 说明影子寄存器写法，以及 boot 计数器位宽不足导致门控永假、
+  PDR 报 “frame 0 (trivial)” 假 PASS 的陷阱。
+- `gen_tb.py` 新增 `DIRECTED_BEGIN/END` 定向激励保留区（位于 `do_reset`
+  之后、随机循环之前）；重新生成时与 `reference_model`、`REF_DECLS` 一并保留。
+- `workflow.md` / `toolchain.md` 补充 `REF_DECLS` 状态必须 `initial` 赋初值
+  （3 行示例），并说明定向激励的上沿 NBA 驱动需再等一拍才能检查上一拍数据。
+
 ## [v1.1.3] - 2026-10-23
 
 ### Fixed

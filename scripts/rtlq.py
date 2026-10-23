@@ -35,7 +35,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
-VERSION = "1.1.3"
+VERSION = "1.1.4"
 SKILL_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_POLICY: Dict[str, Any] = {
     "lint": {
@@ -53,7 +53,10 @@ DEFAULT_POLICY: Dict[str, Any] = {
     },
     "lec": {
         "timeout_s": 300,
-        "blacklist": {"default": ["state_next"]},
+        # Empty by default: silently excluding a real mismatch hides bugs.
+        # Projects may opt in per module via config/quality_policy.json, and
+        # lec prints a hint when the only unproven signal is state_next.
+        "blacklist": {"default": []},
         "multiclock": True,
     },
     "formal": {
@@ -1134,7 +1137,10 @@ def do_lec(ctx: Context, args: argparse.Namespace) -> Dict[str, Any]:
     files = ctx.rtl_files(getattr(args, "files", None))
     if not ctx.tools.yosys:
         return {"command": "lec", "status": "SKIP", "top": top, "reason": "yosys not found"}
-    bl = list(getattr(args, "blacklist", None) or _blacklist_for(ctx, top))
+    # An explicit empty `--blacklist` must clear a configured policy entry;
+    # using `or` here would treat [] as "not given" and silently fall back.
+    cli_bl = getattr(args, "blacklist", None)
+    bl = list(cli_bl) if cli_bl is not None else _blacklist_for(ctx, top)
     bl_file = ctx.logs / ("lec_blacklist_%s.txt" % top)
     _write_text(bl_file, "\n".join(bl) + ("\n" if bl else ""))
     flags = ""
@@ -1169,12 +1175,33 @@ def do_lec(ctx: Context, args: argparse.Namespace) -> Dict[str, Any]:
         status = "FAIL"
     else:
         status = "FAIL"
-    return {
+    unproven_names = _lec_unproven_names(r.out)
+    result = {
         "command": "lec", "status": status, "top": top,
         "proven": proven, "unproven": unproven, "blacklist": bl,
+        "unproven_signals": unproven_names,
         "rc": r.rc, "seconds": round(r.seconds, 3),
         "log": str(r.log) if r.log else None, "tail": r.tail(30),
     }
+    if unproven and not bl and unproven_names and \
+            set(unproven_names) <= {"state_next"}:
+        result["hint"] = (
+            "unproven 仅剩 state_next：常见原因是 F2 用 `else ;` 保持，综合出 "
+            "DFFE。请按 references/coding_style.md 第 13 节在每个分支显式赋值 "
+            "state_next 后重跑。blacklist 默认为空，不会自动排除该信号。")
+    return result
+
+
+def _lec_unproven_names(text: str) -> List[str]:
+    """Signal names from Yosys lines like:
+    `Unproven $equiv ...: \\state_next_gold [1] \\state_next_gate [1]`."""
+    names = set()
+    for line in (text or "").splitlines():
+        if "Unproven" not in line:
+            continue
+        for m in re.finditer(r"\\([A-Za-z_][\w$]*)_gold\b", line):
+            names.add(m.group(1))
+    return sorted(names)
 
 
 def cmd_lec(ctx: Context, args: argparse.Namespace) -> int:
@@ -1182,6 +1209,8 @@ def cmd_lec(ctx: Context, args: argparse.Namespace) -> int:
     ctx.write_stage("lec", result)
     print("[%s] lec %s: proven=%d unproven=%d" %
           (result["status"], result.get("top"), result.get("proven", 0), result.get("unproven", 0)))
+    if result.get("hint"):
+        print("[HINT] %s" % result["hint"])
     if result.get("tail") and result["status"] not in ("PASS", "SKIP"):
         print(result["tail"])
     if args.json:
@@ -1735,6 +1764,9 @@ def cmd_all(ctx: Context, args: argparse.Namespace) -> int:
     for name in STAGE_ORDER:
         s = q["stages"].get(name) or {}
         print("  %-8s %-5s %s" % (name, s.get("status"), _stage_extra(name, s)))
+    lec = q["stages"].get("lec") or {}
+    if lec.get("hint"):
+        print("  [HINT] %s" % lec["hint"])
     for name in ("sim", "negative"):
         s = q["stages"].get(name) or {}
         rt = s.get("tool_retry") or (s.get("sim") or {}).get("tool_retry")

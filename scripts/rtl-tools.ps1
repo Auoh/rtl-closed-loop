@@ -9,6 +9,28 @@ function Test-Ascii {
     return $true
 }
 
+# Locate a working Python 3.8+ interpreter.  Skip broken stubs (e.g. the
+# Windows Store python3 alias exits 49 without output) by probing each
+# candidate before returning it.  Returns @{Exe;Pre} or $null.
+function Find-RtlPython {
+    $cands = @(
+        @{ Exe = 'python';  Pre = @() },
+        @{ Exe = 'python3'; Pre = @() },
+        @{ Exe = 'py';      Pre = @('-3.12') },
+        @{ Exe = 'py';      Pre = @('-3') }
+    )
+    foreach ($c in $cands) {
+        $cmd = Get-Command $c.Exe -ErrorAction SilentlyContinue
+        if (-not $cmd) { continue }
+        $pre = $c.Pre
+        & $cmd.Source @pre -c "import sys; sys.exit(0 if sys.version_info >= (3,8) else 1)" 2>$null | Out-Null
+        if ($LASTEXITCODE -eq 0) {
+            return @{ Exe = $cmd.Source; Pre = $pre }
+        }
+    }
+    return $null
+}
+
 # 工具链安装根目录：环境变量 RTL_TOOLCHAIN 优先；
 # 否则 $HOME\.codex\rtl-toolchain（要求 $HOME 为纯 ASCII）；
 # 否则尝试纯 ASCII 根（C:\ D:\ ...），再不行返回 $null

@@ -80,10 +80,13 @@ python '<技能>\scripts\gen_tb.py' -w . config\my_mod_iface.json
 接口 JSON 示例见 `references/examples/iface_reg_adder.json`，字段说明见
 `references/toolchain.md` 的「gen_tb.py 接口 JSON 格式」。
 
-生成后在 `tb/tb_my_mod.v` 里只改两处：
+生成后在 `tb/tb_my_mod.v` 里改三处（重新生成时都会保留）：
 
 - `task reference_model`：填期望逻辑（必须独立于 DUT，禁止例化或复制 DUT 表达式）；
-- `REF_DECLS_BEGIN/END` 之间：声明跨拍状态（重新生成时会保留这一区和模型逻辑）。
+- `REF_DECLS_BEGIN/END` 之间：声明跨拍状态，并在 `initial` 中赋初值
+  （否则 X 会进入首次比较）；
+- `DIRECTED_BEGIN/END` 之间：写满/空/溢出等定向边界激励（`do_reset` 之后、
+  随机循环之前）。
 
 **4）跑回归**
 
@@ -198,7 +201,8 @@ PPA 是 Yosys generic 映射后的相对值，用于回归对比，不等同于�
 ```
 
 LEC blacklist 只能用于工具无法匹配的等价状态编码，**不得用来掩盖真实不等价**；
-放进去之前先确认清空后仍 `unproven=0`。
+放进去之前先确认清空后仍 `unproven=0`。未配置时默认为空；若 unproven 仅剩
+`state_next`，`lec`/`all` 会打印 `[HINT]` 指向第 13 节，但不会自动排除。
 
 状态机优先按 `references/coding_style.md` 第 13 节写：状态寄存器加
 `(* fsm_encoding = "none" *)`，F2 的每个 `case`/`if` 分支都显式赋值 `state_next`
@@ -235,14 +239,18 @@ formal/<top>_fv.sv
 `report/formal/<top>/`，因此 `[script]` 里的 `read` 用复制后的 basename
 （`<top>.v`、`<top>_fv.sv`），不要带 `rtl/`、`formal/` 前缀。
 
-完整可运行模板见 `references/examples/formal/`（`demo_ctr.sby`、
-`demo_ctr_fv.sv` 和示例 DUT）：
+完整可运行模板见 `references/examples/formal/`：`demo_ctr`（基础计数器）和
+`pulse_stretch`（单拍请求 → 多拍 `busy` 的协议级属性）：
 
 - `prep` 会执行 `formalff -ff2anyinit`，所有未初始化触发器在形式视图中初值任意。
   单条 `initial assume(rst_n == 0)` 只约束时间 0，不能清除其余任意初值。模板用
   `initial boot = 0`，在前 `RESET_CYCLES` 拍 `assume(rst_n == 0)`，之后
   `assume(rst_n == 1)`，并且只在 `boot >= RESET_CYCLES` 时检查断言。
 - 异步复位设计在 `prep` 后加 `clk2fflogic`；仅同步复位时可省略。
+- 协议级多周期属性用**影子计数器/影子状态**独立于 DUT 内部实现，再配合
+  `past_*` 寄存器检查相邻拍边界（起拍、早退、按时释放、`done` 位置）。
+  `pulse_stretch_fv.sv` 是可运行示例；注意 boot 计数器位宽要能表示
+  `RESET_CYCLES`，否则断言门控永假，PDR 会给出 “frame 0 (trivial)” 的假 PASS。
 - quality-lite 也**不含 `yosys-witness`**，`abc pdr` 失败时没有可读 witness/VCD
   （日志显示 `did not produce any traces`）。用 `report/formal/<top>/engine_0/logfile.txt`
   和 `report/logs/formal_<top>.log` 定位失败断言，或把 `mode prove` 临时改为

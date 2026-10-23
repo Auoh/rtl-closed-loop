@@ -29,8 +29,13 @@ $argv = @($cli, 'sim', '--workdir', $ws, '--top', $Top, '--wave')
 if ($Bug) { $argv += '--bug' }
 if ($Fst) { $argv += '--fst' }
 
-$py = Get-Command python -ErrorAction SilentlyContinue
-if ($py) { & $py.Source @argv } else { & py -3.12 @argv }
+$pyInfo = Find-RtlPython
+if (-not $pyInfo) {
+    Write-Host '[MISS] Python 3.8+ not found (tried python/python3/py -3.12/py -3)'
+    exit 3
+}
+$pyArgs = @($pyInfo.Pre) + $argv
+& $pyInfo.Exe @pyArgs
 $code = $LASTEXITCODE
 if ($code -ne 0) {
     Write-Host "[FAIL] simulation/wave generation failed (rc=$code)"

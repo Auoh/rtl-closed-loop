@@ -1,0 +1,23 @@
+# Protocol-level template: single-cycle request -> fixed-length busy pulse.
+# Paths in [files] are relative to the workspace passed with -W.
+# `abc pdr` is required because quality-lite has no yosys-smtbmc.
+[tasks]
+prove
+
+[options]
+mode prove
+depth 40
+aigsmt none
+
+[engines]
+abc pdr
+
+[files]
+rtl/pulse_stretch.v
+formal/pulse_stretch_fv.sv
+
+[script]
+read -formal -sv pulse_stretch.v
+read -formal -sv pulse_stretch_fv.sv
+prep -top pulse_stretch_fv
+clk2fflogic

@@ -50,10 +50,11 @@ if ($Wave) { $argv += '--wave' }
 if ($Timeout -gt 0) { $argv += @('--timeout', [string]$Timeout) }
 if ($Files.Count -gt 0) { $argv += '--files'; $argv += $Files }
 
-$py = Get-Command python -ErrorAction SilentlyContinue
-if ($py) {
-    & $py.Source @argv
-} else {
-    & py -3.12 @argv
+$pyInfo = Find-RtlPython
+if (-not $pyInfo) {
+    Write-Host '[MISS] Python 3.8+ not found (tried python/python3/py -3.12/py -3)'
+    exit 3
 }
+$pyArgs = @($pyInfo.Pre) + $argv
+& $pyInfo.Exe @pyArgs
 exit $LASTEXITCODE
