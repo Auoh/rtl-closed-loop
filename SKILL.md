@@ -41,7 +41,7 @@ description: >-
   `all` 的 `summary_<module>.md` 自动包含「Baseline vs Current」小节
 - 编译+仿真回归：`& '<技能>\scripts\run.ps1' -W <工作区> -Top <module>`（退出码 0=PASS）
 - TB 骨架生成：`python '<技能>\scripts\gen_tb.py' -w <工作区> <接口JSON>`
-- 波形：`& '<技能>\scripts\wave.ps1' -W <工作区> -Top <module>`
+- 波形：`& '<技能>\scripts\wave.ps1' -W <工作区> -Top <module>`（无 GUI 环境加 `-NoGui`，仅生成波形文件）
 - 编码规范检查：`& '<技能>\scripts\format.ps1' -W <工作区> -Top <module>`
 - 检查并生成报告（外部 RTL 必做）：`& '<技能>\scripts\format.ps1' -W <工作区> -Top <module> -Report docs\coding_report_<module>.md`
 - 自动格式化：`& '<技能>\scripts\format.ps1' -W <工作区> -Top <module> -Fix`（verible 格式化 + 规范修复）
@@ -56,19 +56,21 @@ description: >-
 2. **RTL**：编写或审查 `rtl\<module>.v`；外部提供的 RTL 先跑 `format.ps1 -Report` 生成规范报告并修复违例，再进入测试环境环节
 3. **测试环境**：写接口 JSON → 技能 `gen_tb.py -w <工作区>` 生成骨架 → 在 `reference_model` 填写期望逻辑
    （参考模型必须独立于 DUT，禁止用被测逻辑验证被测逻辑）
-4. **回归**：技能 `rtlq.py sim -W <工作区> -Top <module>`（或 `run.ps1`）必须 `RESULT: PASS` 且退出码 0
+4. **回归**：技能 `rtlq.py sim -W <工作区> --top <module>`（或 `run.ps1 -Top`）必须 `RESULT: PASS` 且退出码 0
 5. **负向演练**：`rtlq.py sim --bug` 对关键验收点做错误注入，期望 FAIL 且 `rtlq.py all` 的 negative 阶段为 PASS
 6. **波形确认**：技能 `wave.ps1 -W <工作区>` 打开 GTKWave 核对关键时序（实时加信号方法见 toolchain.md）
-7. **质量门禁**：`rtlq.py all -W <工作区> -Top <module>`，逐项确认
+7. **质量门禁**：`rtlq.py all -W <工作区> --top <module>`，逐项确认
    - lint：style 0 违例、slang 无 error/warning、Yosys 无 latch/组合环
    - synth：generic cell / FF / 逻辑深度不超过 `config\ppa_budget.json` 预算
    - lec：Yosys 等价性证明 unproven=0
-   - formal：`formal\<module>.sby` 的 sby prove 通过（无 sby 时该阶段 SKIP，需在交付物中说明）
+   - formal：`formal\<module>.sby` 的 sby prove 通过（无 sby 时该阶段 SKIP，需在交付物中说明）；
+     quality-lite 不含 `yosys-smtbmc`，`.sby` 必须显式写 `[engines]` 且用 `abc pdr`
+     （缺失或写 smtbmc 时 formal 直接 ERROR 并提示，见 toolchain.md）
    - PPA 指标是 Yosys generic 映射后的相对量，用于回归对比，不等同于签核 STA
 8. **优化（记录→改动→复测→对比）**：
    a. 改动前先跑 `rtlq.py all` 记录基线快照（或明确用 `--baseline <文件>` 指定更早基线）；
    b. 修改 RTL，重跑 4-7（`all` 会生成新快照）；
-   c. 跑 `rtlq.py compare -W <工作区> -Top <module>`，确认六阶段状态无回归、
+   c. 跑 `rtlq.py compare -W <工作区> --top <module>`，确认六阶段状态无回归、
       cells/FF/depth 未超预算；退出码非 0 必须回退或修复；
    d. 在 `docs\optimization_iteration.md` 记录优化理由、前后数据与命令退出码；
    注意 `synth`/`all` 的基线在写当前快照**之前**解析，旧基线不会被覆盖。

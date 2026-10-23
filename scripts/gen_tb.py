@@ -3,7 +3,7 @@
 """gen_tb.py - 根据接口描述 JSON 生成自检测试台骨架（Verilog-2001）。
 
 用法:
-    python tools/gen_tb.py tools/iface_reg_adder.json
+    python scripts/gen_tb.py -w <工作区> <接口描述.json>
 
 生成: tb/tb_<module>.v
 生成内容:
@@ -11,7 +11,8 @@
   - DUT 例化（支持参数）
   - 随机激励（正沿采样、负沿驱动，1bit 输入可配概率）
   - 输入正沿捕获，供参考模型使用
-  - reference_model 期望逻辑桩（唯一需要人工填写的地方）
+  - reference_model 期望逻辑桩（主要人工填写位置）
+  - REF_DECLS_BEGIN/END 声明区（跨拍状态/辅助变量，重新生成时保留）
   - 自动输出比对 + 统计 + PASS/FAIL
 
 JSON 字段:
@@ -57,10 +58,16 @@ def gen(spec_path, out_path):
     top = "tb_" + mod
     out_path = out_path or (TB_DIR / ("tb_" + mod + ".v"))
     old_ref = None
+    old_decls = None
     if out_path.exists():
-        m = re.search(r"task reference_model;\s*begin(.*?)end\s*endtask", out_path.read_text(encoding="utf-8"), re.S)
+        old_text = out_path.read_text(encoding="utf-8")
+        m = re.search(r"task reference_model;\s*begin(.*?)end\s*endtask", old_text, re.S)
         if m:
             old_ref = m.group(1)
+        m = re.search(r"// ==== REF_DECLS_BEGIN ====(.*?)// ==== REF_DECLS_END ====",
+                      old_text, re.S)
+        if m:
+            old_decls = m.group(1).strip("\n")
     clk = spec.get("clock", "clk")
     period = spec.get("clock_period_ns", 10)
     rst = spec.get("reset", {"name": "rst_n", "active_low": True, "assert_cycles": 4})
@@ -77,8 +84,10 @@ def gen(spec_path, out_path):
 
     L = []
     a = L.append
-    a("// 由 tools/gen_tb.py 自动生成，请勿手改本头；修改接口后重新生成。")
-    a("// 唯一需要人工填写的位置: task reference_model（期望输出逻辑）。")
+    a("// 由 scripts/gen_tb.py 自动生成，请勿手改本头；修改接口后重新生成。")
+    a("// 重新生成保留: task reference_model 内部逻辑 + REF_DECLS_BEGIN/END 之间的声明。")
+    a("// 其他手工代码（task/function、定向激励序列）会被模板覆盖，请自行备份。")
+    a("// 人工填写位置: task reference_model（期望输出）；跨拍状态在 REF_DECLS 区声明。")
     a("// 时序约定: 激励在上升沿用 NBA 驱动（零延时），DUT 上升沿采样沿前值；")
     a("//           参考模型使用 *_cap（上升沿捕获的采样值），检查在负沿执行，无 #1 延时。")
     a("`timescale 1ns/1ps")
@@ -139,6 +148,16 @@ def gen(spec_path, out_path):
     a("    integer checks;")
     a("    localparam ERR_PRINT_MAX = 50;")
     a("    integer seed;")
+    a("")
+    a("    // ==== 参考模型自定义声明区（重新生成时原样保留） ====")
+    a("    // 在此声明跨拍状态/辅助变量，例如: reg [7:0] ref_cnt; integer ref_state;")
+    a("    // ==== REF_DECLS_BEGIN ====")
+    if old_decls is not None:
+        for line in old_decls.splitlines():
+            a(line.rstrip())
+    else:
+        a("    // (在此添加 ref_* 声明)")
+    a("    // ==== REF_DECLS_END ====")
     a("")
     a("    // ---- 复位 ----")
     a("    task do_reset;")

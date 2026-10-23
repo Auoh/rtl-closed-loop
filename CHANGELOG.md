@@ -2,6 +2,34 @@
 
 rtl-closed-loop 技能的版本变更记录。版本号遵循语义化版本（SemVer）。
 
+## [v1.1.2] - 2026-10-23
+
+### Fixed
+
+- `rtlq.py` iverilog/GTKWave 查找补齐 `setup.ps1 -Install` 的命名子目录布局：
+  `<root>\iverilog\bin`、`<root>\iverilog\gtkwave\bin`（原先只找
+  `<root>\bin`、`<root>\gtkwave\bin`，工作区无 `tools\` 时会漏掉缓存回退到
+  PATH 中含空格的安装，导致 ivlpp 解析失败）。
+- `doctor` 对「iverilog 位于含空格路径」输出 `[WARN]` 并提示 `setup.ps1 -Install`；
+  JSON 增加 `warnings` 数组，状态为 `WARN`（退出码仍为 0）。
+- `sim` 编译失败且首行是命令解析错误（Windows 本地化“不是内部或外部命令”/
+  “is not recognized…”，含 GBK 输出被 UTF-8 解码的情况）时，自动改用缓存中
+  无空格的 iverilog/vvp 重试一次；控制台打印来源，JSON 记录 `tool_retry`。
+  无缓存可重试时给出部署提示。
+- `formal` 在运行 sby 前检查 `[engines]`：缺失/为空，或使用 `smtbmc` 而
+  quality-lite 未提供 `yosys-smtbmc` 时，直接返回 `ERROR` 并提示改为
+  `[engines] abc pdr`（此前要等 sby 深层报错，信息不直观）。
+
+### Changed
+
+- `gen_tb.py` 新增 `REF_DECLS_BEGIN/END` 声明保留区：重新生成时除
+  `reference_model` 任务体外，也保留跨拍状态/辅助声明；头部注明其他手工代码
+  会被模板覆盖。生成头部的脚本路径改为 `scripts/gen_tb.py`。
+- 文档修正：`rtlq.py` 调用统一用 `--top`（`-Top` 仅适用于 PowerShell 包装器）；
+  补充 `wave.ps1 -NoGui`、仿真日志真实路径（`report\logs\sim_<top>.log`）、
+  `quality_policy.json` / `ppa_budget.json` 字段说明、formal 引擎限制；
+  `gen_tb` 示例 JSON 移入技能内 `references\examples\`，移除外部绝对路径。
+
 ## [v1.1.1] - 2026-10-23
 
 ### Fixed

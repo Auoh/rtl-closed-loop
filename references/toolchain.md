@@ -51,9 +51,48 @@
   不覆盖历史；`compare` 默认取最近两次，也可 `--baseline <文件|时间戳|目录>`；
   `all` 的 `summary_<module>.md` 会附带基线对比表。历史目录可随时归档/清理，
   但删除后无法再对比对应版本。
+- 形式验证引擎：quality-lite 的 Yosys **不含 `yosys-smtbmc`**。`formal\<module>.sby`
+  必须显式写 `[engines]` 且使用 `abc pdr`；省略 `[engines]` 或写 `smtbmc` 时
+  `rtlq formal` 直接返回 ERROR 并提示修改，不会等到 sby 深层报错。
+- iverilog 查找顺序：工作区 `tools\iverilog` → `RTL_TOOLCHAIN` →
+  `$HOME\.codex\rtl-toolchain` → 盘符根（`C:\rtl-toolchain` 等），缓存根同时支持
+  `<root>\bin` 与 `<root>\iverilog\bin` 两种布局（`setup.ps1 -Install` 两种都可能
+  产生）；仍找不到才回退 PATH。
+  `doctor` 对「iverilog 位于含空格路径」给 WARN；`sim` 若首行是命令解析错误，
+  会自动改用缓存中的无空格 iverilog 重试，并在控制台/JSON 的 `tool_retry`
+  中说明来源。
+
+## 质量配置（config/quality_policy.json）
+所有字段可选，缺省值来自 `rtlq.py` 的 `DEFAULT_POLICY`；按模块覆盖时可用
+`lec.blacklist` 的 `<module>` 键。
+
+| 字段 | 默认 | 作用 |
+|---|---|---|
+| `lint.strict_warnings` | `false` | slang warning 是否直接判 lint FAIL |
+| `lint.yosys_structural` | `true` | 是否用 Yosys 检查 latch/组合环 |
+| `sim.grammar` | `"2012"` | 传给 iverilog 的 `-g` 版本 |
+| `sim.timeout_s` | `120` | 编译与仿真各自超时（秒） |
+| `sim.fst` | `false` | `-Wave` 时是否把 VCD 转成 FST |
+| `synth.timeout_s` | `300` | Yosys 综合超时 |
+| `lec.timeout_s` | `300` | LEC 超时 |
+| `lec.multiclock` | `true` | 是否传 `equiv_opt -multiclock` |
+| `lec.blacklist` | `{"default": ["state_next"]}` | 不参与等价性证明的信号；支持 `{"default": [...], "<module>": [...]}` |
+| `formal.timeout_s` | `180` | sby 超时 |
+| `formal.python` | `"auto"` | 运行 sby 的解释器；`auto` 在 Windows 优先 `py -3.12`，也可写 `"python3"`/完整命令 |
+| `all.negative` | `true` | `all` 是否执行缺陷注入阶段 |
+| `all.synth` / `all.lec` / `all.formal` | `true` | `all` 是否执行对应阶段 |
+| `all.fail_on_ppa` | `true` | 预算超限是否让 synth 阶段 FAIL |
+
+## PPA 预算（config/ppa_budget.json）
+- `version`：配置版本（当前为 `1`）。
+- `default`：所有模块共用的上限（可为空）。
+- `tops.<module>.max_cells` / `max_ff` / `max_depth`：该模块的 generic cells、
+  DFF 数、最长逻辑深度上限；未配置的模块只记录指标、不判超限。
+- 指标来自 Yosys `synth` 的 generic 映射，用于同工艺无关的回归对比，
+  不是签核 STA 约束。
 
 ## gen_tb.py 接口 JSON 格式
-参考示例：`D:\codex\rtl_expert\tools\iface_reg_adder.json`
+参考示例（技能自带）：`references\examples\iface_reg_adder.json`
 
 字段：
 - `module`：模块名；`clock`（默认 clk）；`clock_period_ns`（默认 10）
@@ -63,8 +102,13 @@
 - `outputs`：`[{name, width}]`
 - `cycles`：随机周期数；`seed`：随机种子
 
-注意：重新生成 TB 会自动保留已填写的 `reference_model`，但生成后仍需人工确认
-参考模型与接口一致（位宽、时序）。
+注意：重新生成 TB 只保留两处人工内容：
+1. `task reference_model` 内部的逻辑；
+2. `// ==== REF_DECLS_BEGIN ====` 与 `// ==== REF_DECLS_END ====` 之间的声明。
+
+其他手工代码（task/function、定向激励序列、TOP 层额外逻辑）会被模板覆盖，需自行
+备份。跨拍状态请在 `REF_DECLS` 区声明，并在 `reference_model` 任务内更新；
+生成后仍要人工确认参考模型与接口一致（位宽、时序）。
 
 
 ## 迁移 / 换机部署
@@ -140,8 +184,10 @@ Linux/macOS 用 `scripts/run.sh [模块] [bug|wave] [工作区]`。
 - 反例（不要再用）：负沿驱动 + #1 会产生"下沿跳变"的人为时序痕迹，
   且违背"理想仿真不应有延时信息"的语义。
 ## 已知坑（必须遵守）
-1. iverilog 装在含空格路径 `D:\01 software\...`，直接调用其内部子进程（ivlpp）会失败；
-   必须经 junction `D:\codex\rtl_expert\tools\iverilog` 调用（run.ps1/wave.ps1 已自动处理）。
+1. iverilog 装在含空格路径（如 `D:\01 software\iverilog`）时，其内部子进程（ivlpp）
+   会解析失败。用 `setup.ps1 -Install` 部署到无空格缓存根；`rtlq`/`run.ps1`/`wave.ps1`
+   优先使用缓存版本，`sim` 在首行命令解析错误时会自动重试缓存版本并打印来源。
+   `doctor` 对这类路径给 WARN。
 2. 本机为 Windows PowerShell 5.1：修改任何 .ps1 后必须保存为 **UTF-8 with BOM**，
    否则中文注释会导致脚本解析错位（报错行号偏移、变量变空）。
 3. iverilog 不支持 `$srandom`；随机种子用标准 `$random(seed)`。
@@ -151,7 +197,7 @@ Linux/macOS 用 `scripts/run.sh [模块] [bug|wave] [工作区]`。
 6. SVA 断言支持弱：用"每拍 if 检查 + 错误计数"替代 `assert property`。
 7. 数值位宽陷阱：Verilog 表达式宽度取最大操作数宽度，加法需显式加宽
    （如 `exp_sum = {1'b0, a_cap} + {1'b0, b_cap};`）。
-8. Yosys 在 Windows 上要求正斜杠路径（`D:/codex/...`）；rtlq 已统一转换，手工脚本需注意。
+8. Yosys 在 Windows 上要求正斜杠路径（`D:/<工作区>/...`）；rtlq 已统一转换，手工脚本需注意。
 9. sby 必须显式传 `--yosys <yosys.exe>` / `--abc <yosys-abc.exe>`，并设
    `PYTHONUTF8=1`；本机默认 Python 是 3.14 alpha，sby 用 `py -3.12` 更稳。
 10. sby 的 `[files]` 会把源文件复制到工作目录（`report/formal/<top>`），
@@ -161,7 +207,7 @@ Linux/macOS 用 `scripts/run.sh [模块] [bug|wave] [工作区]`。
     的 R1-R10 为准，Verible 仅做格式化和补充 lint。
 
 ## GTKWave 实时加观测信号
-- 路径：`D:\01 software\iverilog\gtkwave\bin\gtkwave.exe`（iverilog 自带，无需另装）
+- 路径：`<缓存根>\iverilog\gtkwave\bin\gtkwave.exe`（随 iverilog 缓存部署，无需另装）
 - 仿真运行期间：`File -> Enable Live View` 开启实时刷新
 - 左下角信号搜索框输入任意信号（如 `dut.wptr`）回车并拖入波形区，无需重启仿真
 - VCD 已 dump 全层级信号（46 个），含 DUT 内部

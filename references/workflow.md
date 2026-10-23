@@ -14,7 +14,9 @@
 - 文件命名：`rtl\<module>.v`，模块名与 TB 顶层一致
 
 ## 3. 测试环境
-- 接口 JSON → `gen_tb.py` 生成骨架
+- 接口 JSON → `gen_tb.py` 生成骨架（示例：技能 `references\examples\iface_reg_adder.json`）
+- 重新生成只保留 `reference_model` 任务内部逻辑与 `REF_DECLS_BEGIN/END` 之间的声明；
+  其他手工代码会被覆盖。跨拍状态请在 `REF_DECLS` 区声明，并在参考模型任务内更新
 - 参考模型要点：
   - 独立计数/独立状态判定，不依赖 DUT 输出（避免循环论证）
   - 期望值按需求语义编写，注意位宽加宽
@@ -31,11 +33,12 @@
 - 目的：验证 TB 敏感度，防止"测试写了但没抓到任何东西"
 
 ## 6. 波形确认
-- `wave.ps1` 打开 GTKWave，核对：复位时序、首笔读写、满/空翻转、
+- `wave.ps1` 打开 GTKWave；无 GUI 环境用 `wave.ps1 -NoGui` 只生成波形文件，
+  再拷到有界面的机器查看。核对：复位时序、首笔读写、满/空翻转、
   读数据一拍延迟、随机段与排空段
 
 ## 7. 质量门禁
-- 一键：`rtlq.py all -W <工作区> -Top <module>`，阶段：lint → sim → negative → synth → lec → formal
+- 一键：`rtlq.py all -W <工作区> --top <module>`，阶段：lint → sim → negative → synth → lec → formal
 - lint：R1-R10 风格 0 违例、slang 0 warning、Yosys 结构检查无 latch/组合环
 - synth：cells/FF/depth 不超过 `config\ppa_budget.json`；超限必须优化或书面说明
 - lec：Yosys `equiv_opt` unproven=0；blacklist 仅用于工具无法匹配的等价状态编码
@@ -45,13 +48,13 @@
 ## 8. 优化（基线 → 改动 → 复测 → 对比 → 记录）
 - 常见项：消除冗余寄存器、指针比较简化、合并等价数据通路、参数化宽度、清理仿真残留
 - 固定顺序：
-  1. **记录基线**：改动前跑 `rtlq.py all -W <工作区> -Top <module>`；快照追加到
+  1. **记录基线**：改动前跑 `rtlq.py all -W <工作区> --top <module>`；快照追加到
      `report\history\<module>\<timestamp>.json`。要对比更早版本时，后续显式传
      `--baseline <快照文件>`（`synth`/`all`/`compare` 均支持）。
   2. **优化 RTL**：一次只做一组语义等价改动，保留原代码对照。
   3. **复测**：重跑 4-7；`rtlq.py all` 会自动写新快照，并在
      `report\summary_<module>.md` 生成「Baseline vs Current」小节。
-  4. **对比**：`rtlq.py compare -W <工作区> -Top <module>`，检查六阶段状态
+  4. **对比**：`rtlq.py compare -W <工作区> --top <module>`，检查六阶段状态
      （PASS/WARN/SKIP/FAIL/ERROR）与 cells/FF/depth 变化；退出码 0=PASS，
      1=存在阶段回归、PPA 回退或预算超限。`--allow-ppa-regression` 仅放宽
      PPA 增量判定，不放过预算超限。
@@ -67,5 +70,6 @@
 - `formal\<module>.sby` + `formal\<module>_fv.sv`（形式验证，适用时）
 - `config\ppa_budget.json` / `config\quality_policy.json`（质量配置）
 - `report\summary.md` + `report\quality.json`（质量报告）
-- `sim\<module>.log`（仿真日志）
+- `report\logs\sim_<module>.log`（仿真运行日志；编译日志为
+  `report\logs\sim_compile_<module>.log`）
 - 结论摘要：PASS/FAIL、覆盖点、PPA（cells/FF/depth）、遗留风险

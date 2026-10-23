@@ -35,7 +35,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
-VERSION = "1.1.1"
+VERSION = "1.1.2"
 SKILL_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_POLICY: Dict[str, Any] = {
     "lint": {
@@ -239,6 +239,72 @@ def _cache_roots() -> List[Path]:
     return out
 
 
+# setup.ps1 -Install puts iverilog either directly in the cache root
+# (<root>/bin, <root>/gtkwave/bin) or in a named subdirectory
+# (<root>/iverilog/bin, <root>/iverilog/gtkwave/bin).  Support both layouts.
+_IVERILOG_SUBDIRS = (
+    Path("bin"),
+    Path("gtkwave") / "bin",
+    Path("iverilog") / "bin",
+    Path("iverilog") / "gtkwave" / "bin",
+)
+_GTKWAVE_SUBDIRS = (
+    Path("gtkwave") / "bin",
+    Path("iverilog") / "gtkwave" / "bin",
+)
+
+
+def _cached_iverilog_pair(reject: Optional[Path]) -> Optional[Tuple[Path, Path]]:
+    """Return (iverilog, vvp) from the cache, skipping the *reject* executable.
+
+    A rejected tool is the one whose path contains spaces and whose internal
+    ivlpp subprocess fails.  The pair must live in the same directory so the
+    two binaries belong to the same installation.
+    """
+    iv_name, vvp_name = _exe_name("iverilog"), _exe_name("vvp")
+    reject_key = ""
+    if reject is not None:
+        try:
+            reject_key = str(reject.resolve()).lower()
+        except OSError:
+            reject_key = str(reject).lower()
+    seen = set()
+    for root in _cache_roots():
+        for rel in _IVERILOG_SUBDIRS:
+            iv = root / rel / iv_name
+            vv = root / rel / vvp_name
+            if not (iv.is_file() and vv.is_file()):
+                continue
+            try:
+                key = str(iv.resolve()).lower()
+            except OSError:
+                key = str(iv).lower()
+            if key in seen or key == reject_key:
+                continue
+            seen.add(key)
+            return iv, vv
+    return None
+
+
+# iverilog's driver launches ivlpp/ivl with an unquoted argv[0]; an install
+# under "D:\01 software\..." therefore fails as a shell parse error.  Windows
+# reports it as a localized "not recognized" message, so match both the
+# English text and the leading quoted drive path (locale-independent, also
+# survives UTF-8 decoding of GBK console output).
+_CMD_PARSE_ERROR_RE = re.compile(
+    r"(is not recognized as an internal or external command"
+    r"|不是内部或外部命令"
+    r"|command not found"
+    r"|^\s*'[A-Za-z]:\\[^'\r\n]*'\s)",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+
+def _looks_like_cmd_parse_error(text: str) -> bool:
+    first = next((ln.strip() for ln in (text or "").splitlines() if ln.strip()), "")
+    return bool(first) and bool(_CMD_PARSE_ERROR_RE.search(first))
+
+
 def _quality_roots(ws: Path) -> List[Path]:
     out: List[Path] = []
     env = os.environ.get("RTL_QUALITY_LITE")
@@ -295,9 +361,8 @@ class Tools:
             if p.is_file():
                 return p
         for root in _cache_roots():
-            for rel in (Path("bin") / _exe_name(name),
-                        Path("gtkwave") / "bin" / _exe_name(name)):
-                p = root / rel
+            for rel in _IVERILOG_SUBDIRS:
+                p = root / rel / _exe_name(name)
                 if p.is_file():
                     return p
         return _which(_exe_name(name))
@@ -309,9 +374,10 @@ class Tools:
             if p.is_file():
                 return p
         for root in _cache_roots():
-            p = root / "gtkwave" / "bin" / _exe_name(name)
-            if p.is_file():
-                return p
+            for rel in _GTKWAVE_SUBDIRS:
+                p = root / rel / _exe_name(name)
+                if p.is_file():
+                    return p
         return _which(_exe_name(name))
 
     def _find_quality(self, package: str, sub: str, exe: str) -> Optional[Path]:
@@ -549,13 +615,30 @@ def _sby_version(t: Tools) -> Optional[str]:
     return None
 
 
+def _doctor_warnings(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Environment hazards that do not fail doctor but break later stages."""
+    warnings: List[Dict[str, Any]] = []
+    iv = next((r for r in rows if r["name"] == "iverilog" and r.get("path")), None)
+    if iv and " " in iv["path"]:
+        warnings.append({
+            "kind": "path_space",
+            "tool": "iverilog",
+            "path": iv["path"],
+            "message": "iverilog 位于含空格路径，内部子进程（ivlpp）可能解析失败: %s" % iv["path"],
+            "hint": "运行 scripts/setup.ps1 -Install 部署到无空格缓存根（如 C:\\rtl-toolchain）；sim 失败时会自动重试缓存版本",
+        })
+    return warnings
+
+
 def cmd_doctor(ctx: Context, args: argparse.Namespace) -> int:
     rows, rc = _doctor_table(ctx)
+    warnings = _doctor_warnings(rows)
+    status = "FAIL" if rc != 0 else ("WARN" if warnings else "PASS")
     if ctx.args.json:
         print(json.dumps({
-            "command": "doctor", "status": "PASS" if rc == 0 else "FAIL",
+            "command": "doctor", "status": status,
             "quality_root": str(ctx.tools.quality_root) if ctx.tools.quality_root else None,
-            "tools": rows,
+            "tools": rows, "warnings": warnings,
         }, ensure_ascii=False, indent=2))
         return rc
     print("== rtlq doctor ==")
@@ -565,7 +648,15 @@ def cmd_doctor(ctx: Context, args: argparse.Namespace) -> int:
         mark = "[OK]  " if r["ok"] else ("[MISS]" if r["kind"] != "optional" else "[OPT] ")
         ver = ("  " + r["version"]) if r["version"] else ""
         print("%s %-16s %s%s" % (mark, r["name"], r["path"] or "-", ver))
-    print("== %s ==" % ("PASS" if rc == 0 else "FAIL（缺少核心/质量工具）"))
+    for w in warnings:
+        print("[WARN] %s" % w["message"])
+        print("       提示: %s" % w["hint"])
+    if rc != 0:
+        print("== FAIL（缺少核心/质量工具） ==")
+    elif warnings:
+        print("== WARN（工具可用，但存在环境隐患） ==")
+    else:
+        print("== PASS ==")
     return rc
 
 
@@ -783,27 +874,62 @@ def do_sim(ctx: Context, args: argparse.Namespace, bug: Optional[bool] = None) -
         except FileNotFoundError:
             pass
     incs = _dedupe([ctx.ws / "rtl", ctx.ws / "tb", ctx.ws])
-    cmd: List[Any] = [ctx.tools.iverilog, "-g" + str(grammar), "-s", tb_top,
-                      "-o", str(vvp_out)]
-    for d in incs:
-        if d.is_dir():
-            cmd += ["-I", str(d)]
-    if use_bug:
-        cmd += ["-DINJECT_BUG=1"]
-    if use_wave:
-        cmd += ["-DDUMP_WAVE"]
-    cmd += [str(f) for f in files]
+
+    def _compile_cmd(iverilog: Path) -> List[Any]:
+        c: List[Any] = [iverilog, "-g" + str(grammar), "-s", tb_top,
+                        "-o", str(vvp_out)]
+        for d in incs:
+            if d.is_dir():
+                c += ["-I", str(d)]
+        if use_bug:
+            c += ["-DINJECT_BUG=1"]
+        if use_wave:
+            c += ["-DDUMP_WAVE"]
+        c += [str(f) for f in files]
+        return c
+
     compile_log = ctx.log_path("sim_compile_%s%s" % (top, "_bug" if use_bug else ""))
-    cr = _run(cmd, ctx.ws, ctx.stage_timeout("sim"), compile_log)
+    cr = _run(_compile_cmd(ctx.tools.iverilog), ctx.ws, ctx.stage_timeout("sim"), compile_log)
+    tool_retry: Optional[Dict[str, Any]] = None
+    parse_error = (cr.rc != 0 and not cr.timed_out and
+                   _looks_like_cmd_parse_error(cr.out))
+    if parse_error:
+        # iverilog at "D:\01 software\..." splits its own child command line.
+        # Retry once with a cached installation on a space-free path.
+        pair = _cached_iverilog_pair(ctx.tools.iverilog)
+        if pair:
+            iv2, vvp2 = pair
+            original_iv = ctx.tools.iverilog
+            first_log, first_rc = compile_log, cr.rc
+            compile_log = ctx.log_path(
+                "sim_compile_%s%s_retry" % (top, "_bug" if use_bug else ""))
+            cr = _run(_compile_cmd(iv2), ctx.ws, ctx.stage_timeout("sim"), compile_log)
+            ctx.tools.iverilog, ctx.tools.vvp = iv2, vvp2
+            tool_retry = {
+                "reason": "command parse error",
+                "from": str(original_iv),
+                "to": str(iv2),
+                "first_rc": first_rc,
+                "first_log": str(first_log),
+                "retry_rc": cr.rc,
+                "retry_log": str(compile_log),
+            }
     if cr.rc != 0 or cr.timed_out:
-        return {
+        result = {
             "command": "sim", "status": "ERROR" if cr.timed_out else "FAIL",
             "top": top, "tb": str(tb), "tb_top": tb_top,
             "bug": use_bug, "compile_rc": cr.rc,
             "compile_seconds": round(cr.seconds, 3),
             "compile_log": str(compile_log), "tail": cr.tail(30),
+            "iverilog": str(ctx.tools.iverilog),
             "seconds": round(cr.seconds, 3),
         }
+        if tool_retry:
+            result["tool_retry"] = tool_retry
+        elif parse_error:
+            result["hint"] = ("iverilog 位于含空格路径，内部子进程解析失败；"
+                              "请运行 scripts/setup.ps1 -Install 部署到无空格缓存根")
+        return result
     run_log = ctx.log_path("sim_%s%s" % (top, "_bug" if use_bug else ""))
     rr = _run([ctx.tools.vvp, str(vvp_out)], sim_dir, ctx.stage_timeout("sim"), run_log)
     text = rr.out
@@ -838,16 +964,20 @@ def do_sim(ctx: Context, args: argparse.Namespace, bug: Optional[bool] = None) -
         m = re.search(r"错误数\s*[:：]\s*(\d+)", text)
         if m:
             stats = "errors=%s" % m.group(1)
-    return {
+    result = {
         "command": "sim", "status": status, "top": top, "tb": str(tb),
         "tb_top": tb_top, "bug": use_bug, "grammar": str(grammar),
         "compile_rc": cr.rc, "vvp_rc": rr.rc,
         "compile_seconds": round(cr.seconds, 3),
         "run_seconds": round(rr.seconds, 3),
         "stats": stats, "wave": wave_info,
+        "iverilog": str(ctx.tools.iverilog),
         "compile_log": str(compile_log), "run_log": str(run_log),
         "tail": rr.tail(20), "seconds": round(cr.seconds + rr.seconds, 3),
     }
+    if tool_retry:
+        result["tool_retry"] = tool_retry
+    return result
 
 
 def cmd_sim(ctx: Context, args: argparse.Namespace) -> int:
@@ -856,6 +986,12 @@ def cmd_sim(ctx: Context, args: argparse.Namespace) -> int:
     ctx.write_stage(name, result)
     print("[%s] sim %s%s: %s" % (result["status"], result.get("top"), " (INJECT_BUG)" if result.get("bug") else "",
                                  result.get("stats") or result.get("reason") or ""))
+    rt = result.get("tool_retry")
+    if rt:
+        print("[WARN] sim 首次编译命令解析失败，已改用缓存工具: %s（原: %s）"
+              % (rt.get("to"), rt.get("from")))
+    if result.get("hint"):
+        print("[HINT] %s" % result["hint"])
     if result.get("tail") and result["status"] not in ("PASS",):
         print(result["tail"])
     if args.json:
@@ -1064,6 +1200,48 @@ def _sby_command(ctx: Context) -> List[str]:
     return [sys.executable]
 
 
+def _sby_engines(sby_file: Path) -> List[str]:
+    """First token of every line in the [engines] section (mode headers allow
+    `[engines prove]`).  An empty list means sby would reject the config."""
+    engines: List[str] = []
+    section = ""
+    for raw in _read_text(sby_file).splitlines():
+        line = raw.strip()
+        if not line or line.startswith(("#", ";")):
+            continue
+        if line.startswith("[") and "]" in line:
+            inner = line[1:line.index("]")].strip().lower()
+            section = inner.split()[0] if inner else ""
+            continue
+        if section != "engines":
+            continue
+        line = line.split("#", 1)[0].strip()
+        if line:
+            engines.append(line.split()[0])
+    return engines
+
+
+def _find_yosys_smtbmc(ctx: Context) -> Optional[Path]:
+    """quality-lite 的 Yosys 只有 yosys.exe/yosys-abc.exe, 不含 smtbmc 驱动。"""
+    roots: List[Path] = []
+    if ctx.tools.quality_root:
+        roots.append(ctx.tools.quality_root)
+    roots.extend(_quality_roots(ctx.ws))
+    seen = set()
+    for root in roots:
+        key = str(root)
+        if key in seen:
+            continue
+        seen.add(key)
+        for rel in (Path("yosys") / "bin", Path("bin")):
+            for name in ("yosys-smtbmc.exe", "yosys-smtbmc", "yosys-smtbmc.py"):
+                p = root / rel / name
+                if p.is_file():
+                    return p
+    w = shutil.which("yosys-smtbmc")
+    return Path(w) if w else None
+
+
 def do_formal(ctx: Context, args: argparse.Namespace) -> Dict[str, Any]:
     top = ctx.infer_top(required=True)
     sby_file = Path(getattr(args, "sby", "") or (ctx.ws / "formal" / (top + ".sby")))
@@ -1075,6 +1253,22 @@ def do_formal(ctx: Context, args: argparse.Namespace) -> Dict[str, Any]:
     if not ctx.tools.sby_py:
         return {"command": "formal", "status": "SKIP", "top": top,
                 "reason": "sby not found", "sby": str(sby_file)}
+    engines = _sby_engines(sby_file)
+    if not engines:
+        return {
+            "command": "formal", "status": "ERROR", "top": top,
+            "sby": str(sby_file),
+            "reason": "sby 配置缺少可用的 [engines] 段（sby 会报 lacking engine configuration）",
+            "hint": "在 %s 中增加:\n[engines]\nabc pdr" % sby_file,
+        }
+    if any(e.lower() in ("smtbmc", "yosys-smtbmc") for e in engines) and \
+            not _find_yosys_smtbmc(ctx):
+        return {
+            "command": "formal", "status": "ERROR", "top": top,
+            "sby": str(sby_file), "engines": engines,
+            "reason": "sby 配置使用 smtbmc，但当前 quality-lite 未提供 yosys-smtbmc",
+            "hint": "把 %s 的 [engines] 改为:\n[engines]\nabc pdr" % sby_file,
+        }
     work = ctx.report_dir / "formal" / top
     if work.exists():
         shutil.rmtree(work)
@@ -1099,7 +1293,8 @@ def do_formal(ctx: Context, args: argparse.Namespace) -> Dict[str, Any]:
         status = "FAIL"
     return {
         "command": "formal", "status": status, "top": top, "sby": str(sby_file),
-        "workdir": str(work), "rc": r.rc, "seconds": round(r.seconds, 3),
+        "engines": engines, "workdir": str(work), "rc": r.rc,
+        "seconds": round(r.seconds, 3),
         "log": str(r.log) if r.log else None, "tail": r.tail(30),
     }
 
@@ -1110,6 +1305,8 @@ def cmd_formal(ctx: Context, args: argparse.Namespace) -> int:
     lines = (result.get("tail") or "").splitlines()
     detail = result.get("reason") or (lines[-1] if lines else "")
     print("[%s] formal %s: %s" % (result["status"], result.get("top"), detail))
+    if result.get("hint"):
+        print("[HINT] %s" % result["hint"])
     if result.get("tail") and result["status"] not in ("PASS", "SKIP"):
         print(result["tail"])
     if args.json:
@@ -1519,6 +1716,12 @@ def cmd_all(ctx: Context, args: argparse.Namespace) -> int:
     for name in STAGE_ORDER:
         s = q["stages"].get(name) or {}
         print("  %-8s %-5s %s" % (name, s.get("status"), _stage_extra(name, s)))
+    for name in ("sim", "negative"):
+        s = q["stages"].get(name) or {}
+        rt = s.get("tool_retry") or (s.get("sim") or {}).get("tool_retry")
+        if rt:
+            print("  [WARN] %s 阶段编译命令解析失败，已改用缓存工具: %s（原: %s）"
+                  % (name, rt.get("to"), rt.get("from")))
     base = q.get("baseline") or {}
     cmp = base.get("compare") or {}
     if cmp:

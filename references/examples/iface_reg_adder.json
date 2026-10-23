@@ -1,0 +1,16 @@
+{
+  "module": "reg_adder",
+  "clock": "clk",
+  "clock_period_ns": 10,
+  "reset": {"name": "rst_n", "active_low": true, "assert_cycles": 4},
+  "params": {"W": 8},
+  "inputs": [
+    {"name": "a", "width": 8},
+    {"name": "b", "width": 8}
+  ],
+  "outputs": [
+    {"name": "sum", "width": 9}
+  ],
+  "cycles": 500,
+  "seed": 7
+}
