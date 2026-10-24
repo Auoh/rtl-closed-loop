@@ -18,6 +18,8 @@ rtl-closed-loop 技能的版本变更记录。版本号遵循语义化版本（S
 - `references/templates/testplan.md` 增加同步 FIFO 的填写示例（需求→测试点→
   载体→判据→结果），并说明表格内 `|` 必须转义。
 - `README.md` 增加「给 AI 助手的执行协议」与波形证据要求。
+- 公开文档脱敏：移除验收记录中的内部模块名、具体检查数量与变异数量；
+  原始材料保留在内部验收工作区。
 - 仅文档变更，无脚本/行为变更。
 
 ## [v1.1.10] - 2026-10-24
@@ -34,14 +36,10 @@ rtl-closed-loop 技能的版本变更记录。版本号遵循语义化版本（S
 
 ### Acceptance
 
-- SPI 验收用例 `spi_master`（3 模块，含 `$paramod` FIFO）：修复前
-  `ERROR: No SAT model available for cell u_tx_fifo_gate ($paramod...)`；
-  修复后 `proven=502 unproven=0`，LEC PASS。
-- 同一工作区 `rtlq.py all --top spi_master`：六阶段 PASS、rc0；
-  sim `checks=680 errors=0 mon_checks=12171 mon_errors=0`；
-  negative `expected=FAIL actual=FAIL`；synth `cells=1339 ff=381 depth=19`；
-  formal `DONE (PASS, rc=0)`；8 个 formal 变异全部被捕获，覆盖全部 8 个属性组。
-- 单模块回归：`sync_fifo`（副本）`proven=51 unproven=0`，LEC PASS。
+- 多模块参数化验收用例：修复前 LEC 报 `No SAT model available`，修复后
+  `unproven=0`；完整六阶段门禁 PASS、rc0。
+- 单模块回归：修复前后 LEC 结果无变化。
+- 验收细节与原始日志保存在内部验收工作区，不随公开文档发布。
 
 ## [v1.1.9] - 2026-10-23
 
