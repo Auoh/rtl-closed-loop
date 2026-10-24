@@ -1,8 +1,14 @@
 # 闭环步骤详解
 
+> 本文件解释“为什么这样做”；逐步命令、期望输出、失败处理与最终自检见
+> [runbook.md](runbook.md)。执行能力较弱的模型应先照 runbook 做，再回来看本节。
+
 ## 0. 输入
 - 用户需求说明（功能、接口、边界行为、验收标准）
 - 可选：已有 .v 文件
+
+每步的完成判据：拿到该步的期望输出并归档证据后才进入下一步；`FAIL`/`ERROR`
+必须修复后重跑，`SKIP` 必须写明原因与补偿措施。
 
 ## 1. 规格化 → docs\<module>_spec.md
 - 接口表：信号/方向/位宽/时序
@@ -33,6 +39,27 @@
    §3 写 TB。
 5. 需求变更时先改规格与 testplan，再改 RTL/TB；回归后把实际结果回填
    testplan 的“结果”列。negative 注入点至少覆盖一个关键验收点。
+6. 表格单元格里的字面量 `|` 写成 `\|`（如 `irq=\|(STATUS&EN)`），否则
+   Markdown 列会错位、追溯矩阵无法核对。
+
+### 2.5.1 分解示例（一个需求如何落到用例）
+
+以同步 FIFO 为例：
+
+```text
+R2 ：“满时写使能被忽略，wr_full 保持 1，已有数据不被覆盖。”
+  TP2.1  功能：填满后继续写，读出的 16 个数据与写入顺序一致
+         判据：checks>0 且 errors=0；载体 DIRECTED:FILL16
+  TP2.2  边界：第 17 次写时 wr_full=1、拒绝写入
+         判据：VCD 中第 17 个写沿后 count=16、wr_full=1；排空后首元素仍为 0x00
+         （VCD 不 dump 存储阵列，mem 需加探针总线才能直接观测）；载体 DIRECTED:FULL_REJECT
+  TP2.3  异常：满状态下同时读写（同拍）
+         判据：写被拒、读成功、count 减 1；载体 DIRECTED:FULL_RDWR
+  NEG:full  注入“去掉满保护”，期望 TB 报错
+```
+
+注意每个测试点都要有**可机械判定**的判据和真实载体；只写“测试满状态”
+不算测试点。
 
 ## 3. 测试环境
 - **硬性检查：TB 的每一处输出比较必须用 `!==`（或 `===`），禁止用 `!=`。**
@@ -63,9 +90,11 @@
   `DIRECTED_BEGIN/END` 区，重新生成时保留
 
 ## 4. 回归判定
-- 输出 `RESULT: PASS` 且退出码 0 才算通过
+- 输出 `RESULT: PASS` 且退出码 0 才算通过；两者缺一不可
 - 检查统计合理性：写入/读取尝试、成功次数、溢出/下溢尝试
-  （覆盖到边界才有意义）
+  （覆盖到边界才有意义）。`checks=0` 说明 TB 根本没比较，按失败处理
+- 失败时先看首个 mismatch 的时间戳与信号，区分 DUT 错还是参考模型错；
+  不得通过删除检查、放宽期望或跳过定向段来变 PASS
 
 ## 5. 负向演练（每模块至少一次）
 - 在 RTL 里临时用 `ifdef` 注入代表性缺陷（如去掉满/空保护）
@@ -76,20 +105,32 @@
   记为 SKIP 并在 reason 中说明，不是失败。需要门禁覆盖时在 RTL 中保留注入
   分支，或手工运行 `sim --bug` 并把日志归档。
 
-## 6. 波形确认
-- `wave.ps1` 打开 GTKWave；无 GUI 环境用 `wave.ps1 -NoGui` 只生成波形文件，
-  再拷到有界面的机器查看。核对：复位时序、首笔读写、满/空翻转、
-  读数据一拍延迟、随机段与排空段
+## 6. 波形确认（行为结论的唯一依据）
+- 生成：`rtlq.py sim --workdir <工作区> --top <module> --wave` → `sim\wave.vcd`
+  （或 `wave.ps1 -NoGui`）。有 GUI 时可用 GTKWave 辅助观察，但“看起来对”
+  不能作为结论。
+- 必须按信号跳变的**时间戳**判定：复位期间与释放首拍、首笔读写延迟、
+  满/空翻转、溢出/下溢、握手保持、背靠背间隔、周期/占空比/setup/hold。
+- 解析注意：同时间戳 delta 只保留最后一次；id 可能跨 scope 复用（只 dump
+  一个 scope 最稳）；沿前值用严格早于该时刻的最后一次变化，沿后值用含该时刻
+  的最后一次变化；先读 `$timescale` 再换算单位。
+- 每条结论写成 `PASS/FAIL | 检查项 | 信号=值 @ 时间戳 | 判据`，归档到
+  `report\wave_checks_<module>.txt`。可复用的解析脚本与完整规则见
+  [runbook.md](runbook.md) §8。
 
 ## 7. 质量门禁
-- 一键：`rtlq.py all -W <工作区> --top <module>`，阶段：lint → sim → negative → synth → lec → formal
+- 一键：`rtlq.py all --workdir <工作区> --top <module>`，阶段：lint → sim → negative → synth → lec → formal
 - lint：R1-R10 风格 0 违例、slang 0 warning、Yosys 结构检查无 latch/组合环
 - synth：cells/FF/depth 不超过 `config\ppa_budget.json`；超限必须优化或书面说明
 - lec：Yosys `equiv_opt` unproven=0。状态机按 `coding_style.md` 第 13 节写
   （`(* fsm_encoding = "none" *)` + F2 每个分支显式赋值 `state_next`，保持分支
   写状态常量、不要写 `state_next = state;`），通常可保持 blacklist 为空；
   blacklist 仅用于工具无法匹配的等价编码，不得掩盖真实不等价。
-- formal：`formal\<module>.sby` 的 prove 必须 `DONE (PASS)`；无配置时 SKIP 并说明。
+  v1.1.10 起脚本在 `proc/memory/opt_clean` 后自动 `flatten` 再 `equiv_opt`；
+  多模块/`$paramod` 设计手工复现时必须同样加 `flatten`，否则报
+  `No SAT model available for cell ...`。
+- formal：`formal\<module>.sby` 的 prove 必须 `DONE (PASS)`；无配置时 SKIP 并说明，
+  且不得把 SKIP 写成“形式验证通过”。
   最小可运行模板见 `references\examples\formal\`：`initial boot = 0` + 复位窗口内
   `assume(rst_n == 0)` 清除 anyinit，断言用 `boot >= RESET_CYCLES` 门控；
   `[files]` 路径相对 `-W` 工作区。quality-lite 无 `yosys-witness`，失败时按
@@ -98,17 +139,20 @@
   `all`/`report` 重生成的 `summary.md` 会列出该目录下的文件（写法见
   `references\examples\formal\README.md`「变异证据归档」）。
 - 产物：`report\quality.json`、`report\summary.md`、`report\logs\`
+- 阶段失败的逐项处理表见 [runbook.md](runbook.md) §9.2；`all` 必须以
+  `== rtlq all: PASS ==` 且退出码 0 结束，`FAIL`/`ERROR` 不得宣称通过，
+  `SKIP` 需在交付说明中写明原因
 
 ## 8. 优化（基线 → 改动 → 复测 → 对比 → 记录）
 - 常见项：消除冗余寄存器、指针比较简化、合并等价数据通路、参数化宽度、清理仿真残留
 - 固定顺序：
-  1. **记录基线**：改动前跑 `rtlq.py all -W <工作区> --top <module>`；快照追加到
+  1. **记录基线**：改动前跑 `rtlq.py all --workdir <工作区> --top <module>`；快照追加到
      `report\history\<module>\<timestamp>.json`。要对比更早版本时，后续显式传
      `--baseline <快照文件>`（`synth`/`all`/`compare` 均支持）。
   2. **优化 RTL**：一次只做一组语义等价改动，保留原代码对照。
   3. **复测**：重跑 4-7；`rtlq.py all` 会自动写新快照，并在
      `report\summary_<module>.md` 生成「Baseline vs Current」小节。
-  4. **对比**：`rtlq.py compare -W <工作区> --top <module>`，检查六阶段状态
+  4. **对比**：`rtlq.py compare --workdir <工作区> --top <module>`，检查六阶段状态
      （PASS/WARN/SKIP/FAIL/ERROR）与 cells/FF/depth 变化；退出码 0=PASS/WARN，
      1=存在阶段回归、PPA 回退、预算超限，或加了 `--fail-on-tool-mismatch` 且
      Yosys 版本不一致。`--allow-ppa-regression` 仅放宽 PPA 增量判定，不放过

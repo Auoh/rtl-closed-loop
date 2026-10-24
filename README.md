@@ -61,6 +61,12 @@ python3 <技能>/scripts/rtlq.py doctor
 
 ## 3. 快速开始
 
+> **给 AI 助手的执行协议**：在动手前先读
+> [references/runbook.md](references/runbook.md)，按 §1→§10 逐步执行。
+> 每一步都要拿到期望输出（如 `RESULT: PASS` 且 `rc=0`）才进入下一步；
+> 没运行过的命令不得写“通过”，`SKIP` 不得当成 `PASS`，
+> 不得为了让测试通过而删检查/放期望/改预算。
+
 在一个新工作区里：
 
 ```bash
@@ -146,7 +152,8 @@ Windows 用 `scripts\rtlq.ps1`，Linux/macOS 用 `scripts/rtlq`；也可直接 `
 5. 回归：`sim` 必须 PASS
 6. 负向演练：`--bug` 必须 FAIL，且 `all` 的 negative 阶段 PASS
    （`all` 仅在顶层 RTL 文本含 `INJECT_BUG` 时自动执行；否则该阶段 SKIP 并注明原因）
-7. 波形确认（可选但建议）
+7. 波形确认：用 `sim --wave` 生成 VCD，按 `references/runbook.md` §8 解析时间戳；
+   功能/边界/复位/接口时序的结论必须以波形为准，不能只靠代码走读
 8. 质量门禁：`all` 六阶段全 PASS
 9. 优化迭代：**记录基线 → 改动 → 重测 → compare → 记录文档**
 10. 交付：spec + testplan + RTL + TB + 日志 + summary + 结论

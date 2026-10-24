@@ -42,7 +42,7 @@
   - `setup.ps1 -Bundle -W <工作区>`：quality-lite 装到 `<工作区>\tools\quality-lite`
   - `setup.ps1 -Install -QualitySource <目录>`：显式指定 quality-lite 来源
   - `export.ps1` 默认把 quality-lite 打进 `toolchain\quality-lite`；`-NoToolchain` 跳过
-- 版本与哈希：`rtlq.py manifest -W <工作区>` 写 `<工作区>\tools\manifest.json`。
+- 版本与哈希：`rtlq.py manifest --workdir <工作区>` 写 `<工作区>\tools\manifest.json`。
   离线包内的 `toolchain\manifest.json` 记录的是导出机路径；到目标机后如需刷新
   `root`/哈希，重跑一次 `rtlq.py manifest` 即可。
 - Windows 注意事项：
@@ -56,6 +56,12 @@
   不覆盖历史；`compare` 默认取最近两次，也可 `--baseline <文件|时间戳|目录>`；
   `all` 的 `summary_<module>.md` 会附带基线对比表。历史目录可随时归档/清理，
   但删除后无法再对比对应版本。
+- LEC 流程：`rtlq.py lec` 的顺序是 `read_verilog` → `hierarchy` →
+  `proc/memory/opt_clean` → **`flatten`** → `equiv_opt ... synth`。v1.1.10 起自动插入
+  `flatten`；手工复现 LEC 时必须在 `equiv_opt` 前同样展平，否则多模块或
+  `$paramod` 设计会报 `No SAT model available for cell ...`（D38）。单模块
+  设计加不加 `flatten` 结果一致。`lec.blacklist` 只用于工具无法匹配的等价
+  状态编码，不得掩盖真实不等价。
 - 形式验证引擎：quality-lite 的 Yosys **不含 `yosys-smtbmc`**。`formal\<module>.sby`
   必须显式写 `[engines]` 且使用 `abc pdr`；省略 `[engines]` 或写 `smtbmc` 时
   `rtlq formal` 直接返回 ERROR 并提示修改，不会等到 sby 深层报错。
@@ -351,3 +357,7 @@ ltp : c7725b13882408c54364b30ec04fcab4f28394f4114deb618bcf33a9b5508db9  (pwm_gen
 - 仿真运行期间：`File -> Enable Live View` 开启实时刷新
 - 左下角信号搜索框输入任意信号（如 `dut.wptr`）回车并拖入波形区，无需重启仿真
 - VCD 已 dump 全层级信号（46 个），含 DUT 内部
+- 无 GUI / 需要可复核证据时：用 `rtlq.py sim --wave` 生成 `sim\wave.vcd`，
+  按 [runbook.md](runbook.md) §8 的解析规则（同时间戳 delta、scope 内 id、
+  沿前/沿后采样、`$timescale` 单位）输出带时间戳的检查记录。GTKWave 目视
+  只能辅助定位，不能作为“通过”的唯一依据。

@@ -2,6 +2,24 @@
 
 rtl-closed-loop 技能的版本变更记录。版本号遵循语义化版本（SemVer）。
 
+## [未发布] - 2026-10-24
+
+### Docs
+
+- 新增 `references/runbook.md`：面向执行能力较弱模型的逐步手册，给出每一步的
+  命令、期望输出、失败处理与完成判据，以及 VCD 判读规则、最小解析脚本、
+  六阶段失败处理表、最终自检清单与禁止行为清单。
+- `SKILL.md` 增加「执行协议」：状态机式推进（`SKIP` 不是 `PASS`）、证据要求、
+  判据不可动、行为结论以波形为准；补充 LEC 自动 `flatten`（D38）说明。
+- `references/workflow.md` 增加测试点分解示例、表格 `|` 转义、`checks=0` 判定、
+  VCD 时间戳判读要点与阶段失败处理入口。
+- `references/toolchain.md` 明确 LEC 流程中的 `flatten` 位置，以及无 GUI 时
+  用 `sim --wave` + 解析脚本生成可复核证据。
+- `references/templates/testplan.md` 增加同步 FIFO 的填写示例（需求→测试点→
+  载体→判据→结果），并说明表格内 `|` 必须转义。
+- `README.md` 增加「给 AI 助手的执行协议」与波形证据要求。
+- 仅文档变更，无脚本/行为变更。
+
 ## [v1.1.10] - 2026-10-24
 
 ### Fixed

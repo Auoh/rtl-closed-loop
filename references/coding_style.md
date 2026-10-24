@@ -123,7 +123,7 @@ else ;  // hold
 - 报告：`scripts/format.ps1 -W <工作区> -Top <module> -Report docs\coding_report_<module>.md`，生成 Markdown 报告（违例明细表：行号/规则/问题/修改建议 + 规则总览）；无违例也输出 PASS 报告。
 - 自动格式化：`scripts/format.ps1 -Fix` 调用 verible-verilog-format（`--indentation_spaces=4 --wrap_end_else_clauses`）后追加安全规范修复（R5 input 去 wire、R7 保持 else 收成 `else;`），再做第二次 verible 对齐并复查（可同时带 `-Report` 出报告）。
 - 回归入口 `run.ps1` 默认**不修改** RTL；需要自动格式化时显式加 `-FixFormat`。
-- 统一检查入口：`python scripts/rtlq.py lint -W <工作区> --top <module>`（R1-R10 + slang + Yosys 结构检查）。
+- 统一检查入口：`python scripts/rtlq.py lint --workdir <工作区> --top <module>`（R1-R10 + slang + Yosys 结构检查）。
 - 违例按 `R1..R10` 对应本文件条目定位；R3（`!rst_n`）与 R4（空 default）需手动补改，自动修复不做语义推断。
 - 外部提供的 RTL：并入工程前必须先跑一次带 `-Report` 的检查，报告随交付物归档到 `docs\`，并按建议修复后才能进入仿真流程。
 ## 11. 附：验证建议（TB 激励纪律）

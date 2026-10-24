@@ -14,8 +14,8 @@
 目录结构与工作区一致。把 `rtl/`、`formal/` 复制到工作区后运行：
 
 ```powershell
-python scripts/rtlq.py formal -W <工作区> --top demo_ctr
-python scripts/rtlq.py formal -W <工作区> --top pulse_stretch
+python scripts/rtlq.py formal --workdir <工作区> --top demo_ctr
+python scripts/rtlq.py formal --workdir <工作区> --top pulse_stretch
 ```
 
 ## 协议级多周期模板（pulse_stretch）
